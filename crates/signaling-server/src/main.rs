@@ -89,8 +89,12 @@ async fn main() {
         .route("/v1/sessions/:code/end", post(stop))
         .route("/v1/sessions/:code/ws/:role", get(relay::ws_handler))
         .with_state(App { sessions: SessionStore::new(), relay: relay::RelayHub::default() });
-    let addr: SocketAddr = "127.0.0.1:8080".parse().expect("address");
-    println!("YT Remote 2 authorization prototype listening on {addr} (localhost only)");
+    // Localhost by default; a private Docker network may override this address.
+    // Never expose the raw HTTP listener publicly without an HTTPS reverse proxy.
+    let bind = std::env::var("YT_REMOTE_BIND")
+        .unwrap_or_else(|_| "127.0.0.1:8080".to_owned());
+    let addr: SocketAddr = bind.parse().expect("invalid YT_REMOTE_BIND address");
+    println!("YT Remote 2 development signaling/relay listening on {addr}");
     let listener = tokio::net::TcpListener::bind(addr).await.expect("bind");
     axum::serve(listener, app).await.expect("serve");
 }
