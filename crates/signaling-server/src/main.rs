@@ -1,4 +1,4 @@
-//! Local-only prototype control plane; no screen/video/input transport.
+//! Local-only consent-gated authorization and WebSocket relay prototype.
 use axum::{
     extract::{Path, State},
     http::{header::AUTHORIZATION, HeaderMap, StatusCode},
@@ -8,9 +8,10 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use std::{net::SocketAddr, time::Duration};
 use yt_session_core::{Error, SessionStore, Status};
+mod relay;
 
 #[derive(Clone)]
-struct App { sessions: SessionStore }
+struct App { sessions: SessionStore, relay: relay::RelayHub }
 #[derive(Serialize)]
 struct NewSession { code: String, student_token: String, expires_in_seconds: u64 }
 #[derive(Serialize)]
@@ -86,7 +87,8 @@ async fn main() {
         .route("/v1/sessions/:code/teacher", get(teacher_status))
         .route("/v1/sessions/:code/:action", post(decide))
         .route("/v1/sessions/:code/end", post(stop))
-        .with_state(App { sessions: SessionStore::new() });
+        .route("/v1/sessions/:code/ws/:role", get(relay::ws_handler))
+        .with_state(App { sessions: SessionStore::new(), relay: relay::RelayHub::default() });
     let addr: SocketAddr = "127.0.0.1:8080".parse().expect("address");
     println!("YT Remote 2 authorization prototype listening on {addr} (localhost only)");
     let listener = tokio::net::TcpListener::bind(addr).await.expect("bind");
