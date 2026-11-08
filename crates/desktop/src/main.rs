@@ -11,7 +11,7 @@ use std::{
 };
 use tungstenite::{client::IntoClientRequest, stream::MaybeTlsStream, Error as WsError, Message};
 use xcap::Monitor;
-type Result<T> = std::result::Result<T, Box<dyn Error + Send + Sync>>;
+type Result<T> = std::result::Result<T, Box<dyn Error>>;
 
 fn api(base: &str, route: &str) -> String {
     format!("{}{}", base.trim_end_matches('/'), route)
@@ -137,6 +137,7 @@ fn student(server: &str) -> Result<()> {
     let monitor = Monitor::all()?.into_iter().next().ok_or("No monitor found")?;
     let mut enigo = Enigo::new(&Settings::default())?;
     let mut last = Instant::now() - Duration::from_secs(1);
+    let sharing_result: Result<()> = (|| {
     while running.load(Ordering::SeqCst) {
         if last.elapsed() >= Duration::from_millis(66) {
             let shot = monitor.capture_image()?;
@@ -159,10 +160,14 @@ fn student(server: &str) -> Result<()> {
             _ => {}
         }
     }
+    Ok(())
+    })();
+    running.store(false, Ordering::SeqCst);
     let _ = socket.close(None);
+    // Always revoke the approved session, including on capture/transport error.
     let _ = token_post(&api(server, &format!("/v1/sessions/{code}/end")), &token, json!({}));
     println!("Screen sharing stopped.");
-    Ok(())
+    sharing_result
 }
 fn teacher(server: &str, code: &str) -> Result<()> {
     let code = code.trim().to_ascii_uppercase();
