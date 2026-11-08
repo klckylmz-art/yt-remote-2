@@ -1,7 +1,7 @@
 //! Consent-gated bidirectional relay for video frames and input commands.
 //! Transport is intentionally bound to localhost until TLS and deployment are configured.
 //! This is not a full remote desktop implementation.
-use std::{collections::HashMap, sync::{Arc, Mutex}, time::Duration};
+use std::{collections::HashMap, sync::{Arc, Mutex, Weak}, time::Duration};
 use axum::{
     extract::{ws::{Message, WebSocket, WebSocketUpgrade}, Path, State},
     http::{HeaderMap, StatusCode},
@@ -18,7 +18,7 @@ const CHANNEL_CAPACITY: usize = 4;
 
 #[derive(Clone)]
 pub(crate) struct RelayHub {
-    inner: Arc<Mutex<HashMap<String, Channels>>>,
+    inner: Arc<Mutex<HashMap<String, Weak<Channels>>>>,
 }
 impl Default for RelayHub {
     fn default() -> Self { Self { inner: Arc::new(Mutex::new(HashMap::new())) } }
@@ -29,13 +29,18 @@ struct Channels {
     inputs: broadcast::Sender<String>,
 }
 impl RelayHub {
-    fn channels(&self, code: &str) -> Channels {
+    fn channels(&self, code: &str) -> Arc<Channels> {
         let mut inner = self.inner.lock().expect("relay mutex poisoned");
-        inner.entry(code.to_owned()).or_insert_with(|| {
-            let (frames, _) = broadcast::channel(CHANNEL_CAPACITY);
-            let (inputs, _) = broadcast::channel(CHANNEL_CAPACITY);
-            Channels { frames, inputs }
-        }).clone()
+        // Dead sessions must not retain queued JPEG frames or unbounded channel entries.
+        inner.retain(|_, weak| weak.strong_count() > 0);
+        if let Some(existing) = inner.get(code).and_then(Weak::upgrade) {
+            return existing;
+        }
+        let (frames, _) = broadcast::channel(CHANNEL_CAPACITY);
+        let (inputs, _) = broadcast::channel(CHANNEL_CAPACITY);
+        let channels = Arc::new(Channels { frames, inputs });
+        inner.insert(code.to_owned(), Arc::downgrade(&channels));
+        channels
     }
 }
 #[derive(Deserialize)]
@@ -87,7 +92,9 @@ pub(crate) async fn ws_handler(
     // The bearer is never included in an invitation and is never logged.
     let token = token.to_owned();
     let channels = app.relay.channels(&code);
-    Ok(ws.on_upgrade(move |socket| relay_socket(socket, app, code, token, student, channels)))
+    Ok(ws.max_message_size(FRAME_LIMIT + 1024)
+        .max_frame_size(FRAME_LIMIT + 1024)
+        .on_upgrade(move |socket| relay_socket(socket, app, code, token, student, channels)))
 }
 async fn relay_socket(
     mut socket: WebSocket,
@@ -95,7 +102,7 @@ async fn relay_socket(
     code: String,
     token: String,
     student: bool,
-    channels: Channels,
+    channels: Arc<Channels>,
 ) {
     let mut frames = channels.frames.subscribe();
     let mut inputs = channels.inputs.subscribe();
