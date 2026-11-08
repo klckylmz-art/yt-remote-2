@@ -1,27 +1,60 @@
-name: YT Remote 2 - Rust checks
+name: YT Remote 2 - Build and test
+
 on:
   push:
   pull_request:
   workflow_dispatch:
+
 permissions:
   contents: read
+
 jobs:
-  rust-checks:
+  session-and-relay:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
-      - run: cargo check --workspace --all-targets
-      - run: cargo test --workspace
-  core-platform-tests:
+      - name: Check security gate and relay
+        run: cargo check -p yt-session-core -p yt-signaling-server --all-targets
+      - name: Test consent and command validation
+        run: cargo test -p yt-session-core -p yt-signaling-server
+
+  desktop-build:
+    needs: session-and-relay
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, macos-15, macos-15-intel]
+        include:
+          - os: windows-latest
+            name: Windows-x64
+          - os: macos-15
+            name: macOS-Apple-Silicon
+          - os: macos-15-intel
+            name: macOS-Intel
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - run: cargo test --workspace
+      - name: Compile full workspace
+        run: cargo check --workspace --all-targets
+      - name: Run all unit tests
+        run: cargo test --workspace
+      - name: Build native desktop prototype
+        run: cargo build --release -p yt-remote-desktop
+      - name: Upload Windows prototype (not a release)
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: YT-Remote-2-${{ matrix.name }}-UNTESTED
+          path: target/release/yt-remote-desktop.exe
+          if-no-files-found: error
+      - name: Upload macOS prototype (not an app bundle)
+        if: runner.os == 'macOS'
+        uses: actions/upload-artifact@v4
+        with:
+          name: YT-Remote-2-${{ matrix.name }}-UNTESTED
+          path: target/release/yt-remote-desktop
+          if-no-files-found: error
