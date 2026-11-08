@@ -5,6 +5,11 @@ on:
   pull_request:
   workflow_dispatch:
 
+# Keep only the newest push build per branch; do not waste runners on obsolete commits.
+concurrency:
+  group: yt-remote-2-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
