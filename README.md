@@ -1,36 +1,42 @@
 # YT Remote 2.0
 
-A new Rust-based, consent-first remote-desktop project. **This is a development starter, not a working remote-desktop release.**
+**Development status: native screen/control prototype committed. NOT a verified release.**
 
-## Required user flow
+The finished product must provide a fully English desktop UI: student clicks **GENERATE CODE (STUDENT)** and **COPY CODE**, teacher pastes the code and clicks **CONNECT**, and the student must click **ALLOW SCREEN & KEYBOARD** before any screen or input access begins. No user enters an IP address, port or link. The final UI requires a fullscreen teacher viewer with compact minimize/disconnect buttons, Windows .exe, and Intel/Apple Silicon macOS .app/.dmg.
 
-1. The student clicks **GENERATE CODE (STUDENT)**.
-2. The student copies one 16-character session code and sends it to the teacher.
-3. The teacher pastes that code and clicks **CONNECT**.
-4. The student receives a request and must explicitly click **ALLOW SCREEN & KEYBOARD**.
-5. Only an approved, active session may start screen streaming and mouse/keyboard control.
-6. The student can click **STOP SHARING NOW** at any time.
+## Currently implemented in source
 
-All user-facing copy must be in English. No IP address, port or HTTPS invitation link input; no audio, camera, file transfer or clipboard sync.
+- `crates/session-core` — 16-character private code generation, distinct student/teacher tokens, permission request, explicit allow/deny, expiry, and session revocation. Unit tests cover consent.
+- `crates/signaling-server` — localhost HTTP authorization API and a WebSocket relay for authenticated JPEG frames (student → teacher) and allowlisted mouse/keyboard JSON commands (teacher → student). Frames are never accepted by the relay before an approved session. No file, audio, camera, or clipboard channels.
+- `crates/desktop` — **experimental command-line native client**, using XCap desktop capture, Enigo input, and a Minifb teacher viewer. It is a basic integration step, not the final graphical desktop client. Uses JPEG frames, about 15 FPS target. It does **not** implement hardware H.264/AV1, 60 FPS, adaptive 30 FPS, or professional fullscreen UI.
+- `.github/workflows/ci.yml` — checks/tests and release-mode native prototype builds on Windows x64, macOS Apple Silicon, and macOS Intel. Artifacts are explicitly marked UNTESTED and are not production installers.
 
-## Starter scope
+## Local prototype usage (trusted machines only)
 
-- `crates/session-core`: code generation and explicit-consent lifecycle.
-- `crates/signaling-server`: localhost-only proof-of-concept authorization API.
-- `.github/workflows/ci.yml`: Rust checks for Linux, Windows and macOS.
-
-**Not implemented:** graphical desktop UI, native screen capture, hardware codec, P2P/relay, remote controls, app installers and actual device tests. No public deployment. Do not advertise this starter as finished.
-
-## Local checks
+The server defaults to `127.0.0.1:8080`, so use the same machine or a **trusted, separately configured TLS reverse proxy** for remote tests. The server is *not* production hardened. Do not expose its HTTP port directly to the internet.
 
 ```bash
-cargo test --workspace
-cargo check --workspace --all-targets
+cargo test -p yt-session-core -p yt-signaling-server
 cargo run -p yt-signaling-server
+
+# Student's computer (separate terminal)
+cargo run -p yt-remote-desktop -- student
+
+# Teacher's computer, paste the student's one-piece code
+cargo run -p yt-remote-desktop -- teacher XXXX-XXXX-XXXX-XXXX
 ```
 
-The prototype server binds to `127.0.0.1:8080` and is unsafe to publish directly to the internet. Production deployment requires TLS, abuse protection, authenticated signaling and tested relay infrastructure.
+The student receives a text request and types `ALLOW`; the student can press Enter during sharing to revoke permission. The teacher's viewer closes with Escape. Remote streaming requires valid macOS Screen Recording and Accessibility grants. For a TLS-proxied server, set `YT_REMOTE_SERVER=https://your-server` on each machine **during development**. This variable is internal deployment configuration, not something the final app should ask users to enter.
 
-Apple signing/notarization is not a requirement for the initial prototype, but macOS privacy grants remain mandatory and unsigned builds may require manual approval.
+## What must happen before a real release
 
-See `docs/PLAN.md` for milestones.
+1. CI must actually pass, and builds must be downloaded and installed on physical Windows, Apple Silicon and Intel Macs.
+2. Replace the text-terminal student approval with the requested native graphical desktop UI.
+3. Replace JPEG-frame prototype with hardware-accelerated capture/encoding and low-latency rendering, with measured 60/30 FPS adaptation and Excel text clarity.
+4. Deploy and security-harden a reachable TLS signaling/relay service; test restrictive NAT and network failures.
+5. Test denial/no-frame/no-input, revocation during streaming, reconnect, different networks, full screen, minimize and exit.
+6. Package Windows .exe and macOS .app/.dmg. Paid Apple Developer certificates are not a requirement for prototypes; unsigned apps may need local user approval.
+
+**Do not describe source changes, CI configuration, or unverified artifacts as a working release.**
+
+See [Implementation plan](docs/PLAN.md).
