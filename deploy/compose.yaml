@@ -1,0 +1,30 @@
+# Development deployment template, not a production security certification.
+services:
+  server:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    restart: unless-stopped
+    networks: [internal]
+    expose: ["8080"]
+    security_opt:
+      - no-new-privileges:true
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    networks: [internal]
+    environment:
+      YT_REMOTE_DOMAIN: ${YT_REMOTE_DOMAIN:?Set YT_REMOTE_DOMAIN in deploy/.env}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on: [server]
+networks:
+  internal: {}
+volumes:
+  caddy_data: {}
+  caddy_config: {}
