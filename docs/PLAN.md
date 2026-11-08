@@ -12,9 +12,13 @@
 - [ ] Review RustDesk integration/licensing or choose an independently maintained engine.
 - [ ] Windows Graphics Capture and macOS ScreenCaptureKit.
 - [ ] Native hardware encoding, low-latency decoding, clear Excel text.
-- [ ] Low-latency mouse/keyboard transport gated on active student approval.
-- [ ] NAT traversal with deployed and tested relay.
-- [ ] Revocation verified in both video and control planes.
+- [x] First authenticated, consent-gated WebSocket relay for JPEG frames and allowlisted input commands (source only; builds not verified).
+- [x] Experimental native desktop capture/input and teacher viewer in Rust (terminal launcher; builds not verified).
+- [ ] Production-grade low-latency mouse/keyboard transport and hardware-encoded video.
+- [x] Optional Caddy TLS + Docker deployment template (not deployed).
+- [ ] Real deployed public relay, abuse prevention and restrictive-NAT tests.
+- [x] Source unit test checks relay access before approval, after approval and after student stop.
+- [ ] Live integration test proving revocation of an ongoing real video/control stream.
 
 ## Phase 3 — Desktop applications
 - [ ] Fully English: GENERATE CODE (STUDENT), COPY CODE, CONNECT, ALLOW SCREEN & KEYBOARD, DENY, STOP SHARING NOW.
