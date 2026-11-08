@@ -158,4 +158,22 @@ mod tests {
         assert!(!valid_input(r#"{"kind":"move","x":50,"y":0.2}"#));
         assert!(!valid_input(r#"{"kind":"key","name":"ctrl+c","pressed":true}"#));
     }
+    #[test]
+    fn relay_refuses_access_until_approval_and_after_revocation() {
+        use super::{approved, App, RelayHub};
+        use std::time::Duration;
+        use yt_session_core::SessionStore;
+        let sessions = SessionStore::new();
+        let app = App { sessions: sessions.clone(), relay: RelayHub::default() };
+        let student = sessions.create(Duration::from_secs(120)).unwrap();
+        let teacher = sessions.request(&student.code).unwrap();
+        assert!(!approved(&app, &student.code, &teacher.teacher_secret, false));
+        assert!(!approved(&app, &student.code, &student.student_secret, true));
+        sessions.decide(&student.code, &student.student_secret, &teacher.request_id, true).unwrap();
+        assert!(approved(&app, &student.code, &teacher.teacher_secret, false));
+        assert!(approved(&app, &student.code, &student.student_secret, true));
+        sessions.end(&student.code, &student.student_secret).unwrap();
+        assert!(!approved(&app, &student.code, &teacher.teacher_secret, false));
+        assert!(!approved(&app, &student.code, &student.student_secret, true));
+    }
 }
