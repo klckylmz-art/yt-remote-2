@@ -56,10 +56,16 @@ jobs:
           name: YT-Remote-2-${{ matrix.name }}-UNTESTED
           path: target/release/yt-remote-desktop.exe
           if-no-files-found: error
-      - name: Upload macOS prototype (not an app bundle)
+      - name: Package ad-hoc signed macOS app and dmg
+        if: runner.os == 'macOS'
+        shell: bash
+        run: bash packaging/macos/package.sh "${{ matrix.name }}"
+      - name: Upload macOS app and dmg (untested)
         if: runner.os == 'macOS'
         uses: actions/upload-artifact@v4
         with:
           name: YT-Remote-2-${{ matrix.name }}-UNTESTED
-          path: target/release/yt-remote-desktop
+          path: |
+            dist/YTRemote-${{ matrix.name }}.zip
+            dist/YTRemote-${{ matrix.name }}.dmg
           if-no-files-found: error
