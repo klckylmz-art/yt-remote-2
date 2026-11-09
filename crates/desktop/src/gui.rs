@@ -65,7 +65,6 @@ impl Canvas {
     }
 }
 const PRIMARY: Rect = Rect { x: 95, y: 245, w: 610, h: 55 };
-const SECONDARY: Rect = Rect { x: 95, y: 325, w: 610, h: 55 };
 const APPROVE: Rect = Rect { x: 95, y: 288, w: 610, h: 55 };
 const DENY: Rect = Rect { x: 95, y: 358, w: 610, h: 55 };
 fn start_student(server: &str) -> Result<Credentials> {
@@ -252,7 +251,6 @@ pub(super) fn launch(server: &str) -> Result<()> {
                         Ok(status) if status["status"] == "approved" => {
                             // Close launcher before opening the fullscreen teacher viewer.
                             let (code,token) = (code.clone(),token.clone());
-                            drop(window);
                             return teacher_viewer(server, &code, token);
                         }
                         Ok(status) if status["status"] == "denied" =>
@@ -277,11 +275,11 @@ pub(super) fn launch(server: &str) -> Result<()> {
         if let Some(replacement) = next { page = replacement; }
         window.update_with_buffer(&canvas.pixels, W, H)?;
     }
-    if let Page::Waiting(c) | Page::Approval(c,_) | Page::Sharing(c,_) = &page {
-        stop_student(server,c);
-    }
     if let Page::Sharing(_,running) = &page {
         running.store(false, Ordering::SeqCst);
+    }
+    if let Page::Waiting(c) | Page::Approval(c,_) | Page::Sharing(c,_) = &page {
+        stop_student(server,c);
     }
     Ok(())
 }
