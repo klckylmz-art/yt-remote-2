@@ -166,6 +166,10 @@ async fn relay_socket(
                     Ok(cmd) if approved(&app, &code, &token, student) => {
                         if !matches!(tokio::time::timeout(SEND_TIMEOUT, socket.send(Message::Text(cmd))).await, Ok(Ok(()))) { break; }
                     }
+                    // Dropping even one key/button transition can leave a
+                    // modifier or mouse button logically held. Fail closed
+                    // rather than replaying a partial input sequence.
+                    Err(broadcast::error::RecvError::Lagged(_)) => break,
                     Err(broadcast::error::RecvError::Closed) => break,
                     _ => {}
                 }
@@ -185,6 +189,20 @@ mod tests {
             std::future::pending::<Result<(), ()>>(),
         ).await;
         assert!(result.is_err());
+    }
+    #[tokio::test]
+    async fn input_channel_detects_lost_transitions() {
+        // With a tiny bounded queue, losing a key-up event must be
+        // distinguishable from an intact sequence. The student socket loop
+        // disconnects on RecvError::Lagged rather than applying later input.
+        let (sender, mut receiver) = tokio::sync::broadcast::channel::<String>(2);
+        sender.send("key-down".into()).unwrap();
+        sender.send("key-up".into()).unwrap();
+        sender.send("next-command".into()).unwrap();
+        assert!(matches!(
+            receiver.recv().await,
+            Err(tokio::sync::broadcast::error::RecvError::Lagged(1))
+        ));
     }
     #[test]
     fn rejects_file_transfer_and_unsafe_commands() {
