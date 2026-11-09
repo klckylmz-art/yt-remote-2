@@ -166,6 +166,51 @@ mod tests {
         assert!(!s.can_stream(&st.code, &first.teacher_secret));
     }
     #[test]
+    fn concurrent_teachers_cannot_bypass_one_pending_request() {
+        use std::sync::Barrier;
+        use std::thread;
+        let sessions = SessionStore::new();
+        let student = sessions.create(Duration::from_secs(900)).unwrap();
+        let start = Arc::new(Barrier::new(3));
+        let workers: Vec<_> = (0..2).map(|_| {
+            let sessions = sessions.clone();
+            let code = student.code.clone();
+            let start = Arc::clone(&start);
+            thread::spawn(move || {
+                start.wait();
+                sessions.request(&code)
+            })
+        }).collect();
+        start.wait();
+        let results: Vec<_> = workers.into_iter().map(|w| w.join().unwrap()).collect();
+        assert_eq!(results.iter().filter(|r| r.is_ok()).count(), 1);
+        assert_eq!(results.iter().filter(|r| **r == Err(Error::InvalidState)).count(), 1);
+        let winner = results.into_iter().find_map(Result::ok).unwrap();
+        assert!(!sessions.can_stream(&student.code, &winner.teacher_secret));
+        sessions.cancel_request(&student.code, &winner.teacher_secret).unwrap();
+        assert_eq!(sessions.student_status(&student.code, &student.student_secret).unwrap(),
+                   (Status::Waiting, None));
+        let next = sessions.request(&student.code).unwrap();
+        assert_ne!(winner.teacher_secret, next.teacher_secret);
+        assert!(!sessions.can_stream(&student.code, &winner.teacher_secret));
+        sessions.decide(&student.code, &student.student_secret, &next.request_id, true).unwrap();
+        assert!(sessions.can_stream(&student.code, &next.teacher_secret));
+    }
+
+    #[test]
+    fn expired_approval_never_authorizes_streaming() {
+        let sessions = SessionStore::new();
+        let student = sessions.create(Duration::from_millis(80)).unwrap();
+        let teacher = sessions.request(&student.code).unwrap();
+        sessions.decide(&student.code, &student.student_secret, &teacher.request_id, true).unwrap();
+        assert!(sessions.can_stream(&student.code, &teacher.teacher_secret));
+        std::thread::sleep(Duration::from_millis(110));
+        assert!(!sessions.can_stream(&student.code, &teacher.teacher_secret));
+        assert_eq!(sessions.teacher_status(&student.code, &teacher.teacher_secret), Ok(Status::Expired));
+        assert_eq!(sessions.request(&student.code), Err(Error::Expired));
+    }
+
+    #[test]
     fn invalid_and_expired_codes_fail() {
         let s = SessionStore::new();
         assert_eq!(s.request("127.0.0.1:8080"), Err(Error::InvalidCode));
