@@ -258,7 +258,16 @@ pub(super) fn launch(server: &str) -> Result<()> {
                 canvas.text(95, 230, "Screen access is blocked until the student allows.", MUTED, 1);
                 canvas.button(PRIMARY, "CANCEL", RED);
                 if click.is_some_and(|(x,y)| PRIMARY.contains(x,y)) {
-                    next = Some(Page::Home);
+                    // Explicitly withdraw the pending request from the server.
+                    // If cancellation fails, keep the waiting screen so the user
+                    // does not believe remote authorization was revoked.
+                    next = Some(match token_post(
+                        &api(server, &format!("/v1/sessions/{code}/cancel")),
+                        token, json!({}),
+                    ) {
+                        Ok(()) => Page::Home,
+                        Err(e) => Page::Error(format!("Cannot cancel request: {e}")),
+                    });
                 } else if last_poll.elapsed() >= Duration::from_millis(650) {
                     last_poll = Instant::now();
                     match token_get(&api(server,&format!("/v1/sessions/{code}/teacher")),token) {
