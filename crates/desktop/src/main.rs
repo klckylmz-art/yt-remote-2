@@ -222,8 +222,20 @@ fn teacher_viewer(server: &str, code: &str, token: String) -> Result<()> {
         }
         let _ = socket.close(None);
     });
-    let mut window = Window::new("YT Remote — Esc to Disconnect",1280,720,
-        WindowOptions::default())?;
+    // Borderless viewer sized to the teacher's primary monitor.
+    // Native fullscreen/minimize support still requires final device testing.
+    let display = Monitor::all()?.into_iter()
+        .find(|m| m.is_primary().unwrap_or(false))
+        .ok_or("No teacher display found")?;
+    let viewer_width = display.width()? as usize;
+    let viewer_height = display.height()? as usize;
+    let mut window = Window::new("YT Remote — Esc to Disconnect",viewer_width,viewer_height,
+        WindowOptions {
+            borderless: true,
+            scale_mode: minifb::ScaleMode::Stretch,
+            ..WindowOptions::default()
+        })?;
+    window.set_position(0, 0);
     window.set_target_fps(60);
     let mut pixels = vec![0_u32; 1280 * 720];
     let mut previous_mouse = None;
@@ -232,8 +244,18 @@ fn teacher_viewer(server: &str, code: &str, token: String) -> Result<()> {
     while active.load(Ordering::SeqCst) && window.is_open() && !window.is_key_down(Key::Escape) {
         while let Ok(frame) = from_network.try_recv() { pixels = frame; }
         if let Some((x,y)) = window.get_mouse_pos(MouseMode::Clamp) {
-            let x = (f64::from(x) / 1280.0).clamp(0.0,1.0);
-            let y = (f64::from(y) / 720.0).clamp(0.0,1.0);
+            // Reserve the top-right 48x48 display pixels for the local exit control.
+            if x >= (viewer_width.saturating_sub(48)) as f32 && y < 48.0 {
+                if window.get_mouse_down(MouseButton::Left) { break; }
+                // Never inject a click into the student's display from this control.
+                for py in 0..36 { for px in 1240..1280 {
+                    pixels[py * 1280 + px] = 0x882f43;
+                }}
+                window.update_with_buffer(&pixels, 1280, 720)?;
+                continue;
+            }
+            let x = (f64::from(x) / viewer_width as f64).clamp(0.0,1.0);
+            let y = (f64::from(y) / viewer_height as f64).clamp(0.0,1.0);
             if previous_mouse != Some((x.to_bits(), y.to_bits())) {
                 let _ = to_network.send(json!({"kind":"move","x":x,"y":y}).to_string());
                 previous_mouse = Some((x.to_bits(), y.to_bits()));
@@ -256,6 +278,14 @@ fn teacher_viewer(server: &str, code: &str, token: String) -> Result<()> {
         for key in window.get_keys_released() {
             let name = format!("{key:?}").to_ascii_lowercase();
             let _ = to_network.send(json!({"kind":"key","name":name,"pressed":false}).to_string());
+        }
+        // Small upper-right disconnect target; never part of the remote screen data.
+        for py in 0..36 { for px in 1240..1280 {
+            pixels[py * 1280 + px] = 0x882f43;
+        }}
+        for i in 12..26 {
+            pixels[i * 1280 + (1247 + (i - 12))] = 0xffffff;
+            pixels[i * 1280 + (1260 - (i - 12))] = 0xffffff;
         }
         window.update_with_buffer(&pixels, 1280, 720)?;
     }
