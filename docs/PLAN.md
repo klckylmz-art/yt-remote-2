@@ -47,3 +47,8 @@ No microphone, audio, camera, file transfer or clipboard sync. IP addresses, por
 ## Concurrent STOP versus ALLOW regression (2026-11-09; pending CI)
 - Added `concurrent_student_stop_and_teacher_approval_cannot_resurrect_session` to session-core. A barrier starts ALLOW and STOP on separate threads, accepts either valid ordering, then asserts the teacher bearer is revoked, student status is terminal, and the code cannot accept another request.
 - This proves a session-store invariant only if the new test passes in CI; it does **not** establish zero in-flight network frames, native key/button release, or physical cross-network behavior. Keep those release gates open.
+
+## Session TTL hardening (2026-11-10; CI not yet verified)
+- The session store now caps every requested lifetime to 900 seconds, including direct library callers. Previously `Duration::MAX` could overflow `Instant` arithmetic or produce an unexpectedly long authorization window.
+- Added `oversized_session_ttl_is_capped_without_panicking` regression: it creates a session with `Duration::MAX`, checks that approval is still mandatory, and checks STOP revocation. This does not wait 15 minutes to verify the upper bound; expiry integration tests and live socket checks remain open.
+- Evidence: source commit and test are recorded on the native rebuild branch. No new CI result, cross-network test, or physical-device test is claimed by this entry.
