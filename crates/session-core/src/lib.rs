@@ -148,7 +148,8 @@ mod tests {
         assert!(!secret_matches(&student.student_secret, "a"));
         assert!(!secret_matches(&student.student_secret, &student.student_secret.to_uppercase()));
         let mut altered = student.student_secret.clone();
-        altered.replace_range(63..64, if &altered[63..64] == "a" { "b" } else { "a" });
+        let replacement = if &altered[63..64] == "a" { "b" } else { "a" };
+        altered.replace_range(63..64, replacement);
         assert!(!secret_matches(&student.student_secret, &altered));
         assert_eq!(sessions.student_status(&student.code, &altered), Err(Error::Unauthorized));
         assert_eq!(sessions.student_status(&student.code, &student.student_secret).unwrap().0, Status::Requested);
