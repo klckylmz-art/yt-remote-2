@@ -21,10 +21,13 @@
 - [ ] Live integration test proving revocation of an ongoing real video/control stream.
 
 ## Phase 3 — Desktop applications
-- [ ] Fully English: GENERATE CODE (STUDENT), COPY CODE, CONNECT, ALLOW SCREEN & KEYBOARD, DENY, STOP SHARING NOW.
-- [ ] Teacher fullscreen view with small upper-right minimize/disconnect controls.
+- [x] First English graphical launcher includes GENERATE CODE (STUDENT), COPY CODE, CONNECT, ALLOW SCREEN & KEYBOARD, DENY, STOP SHARING NOW (source only, device behavior not verified).
+- [ ] Professional polish, accessibility, device-tested UI and native minimize control.
+- [x] Borderless teacher viewer scaled to primary display and top-right disconnect target (source only, device behavior not verified).
+- [ ] Native minimize control and true OS fullscreen behavior tested across Windows/macOS.
 - [ ] Adaptive 60→30 fps target and bitrate/resolution adjustment.
-- [ ] Windows x64 installer; Apple Silicon and Intel macOS .app/.dmg.
+- [x] Windows release-mode .exe build and macOS Intel/Apple Silicon .app/.dmg packaging configured in CI (new builds not verified).
+- [ ] Verified Windows installer and signed/notarization-free Mac installation on real devices.
 - [ ] No paid Apple signing certificate required for prototype; preserve macOS permission model.
 - [ ] Real physical Windows/macOS, cross-network, restrictive-NAT and permission-denial tests.
 - [ ] Publish only verified releases with checksums and test results.
