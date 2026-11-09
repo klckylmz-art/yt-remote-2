@@ -114,15 +114,15 @@ fn input_code(window: &Window, typed: &mut String, clipboard: &mut Option<Clipbo
     for key in window.get_keys_pressed(KeyRepeat::No) {
         match key {
             Key::Backspace => { typed.pop(); }
-            Key::A..=Key::Z => {
-                let c = (b'A' + (key as u8 - Key::A as u8)) as char;
-                if typed.len() < 16 { typed.push(c); }
+            _ => {
+                let label = format!("{key:?}");
+                let raw = label.strip_prefix("Key").unwrap_or(&label);
+                if raw.len() == 1
+                    && raw.bytes().all(|b| b.is_ascii_alphanumeric())
+                    && typed.len() < 16 {
+                    typed.push(raw.chars().next().unwrap().to_ascii_uppercase());
+                }
             }
-            Key::Key0..=Key::Key9 => {
-                let c = (b'0' + (key as u8 - Key::Key0 as u8)) as char;
-                if typed.len() < 16 { typed.push(c); }
-            }
-            _ => {}
         }
     }
 }
@@ -161,7 +161,7 @@ pub(super) fn launch(server: &str) -> Result<()> {
                         Ok(c) => Page::Waiting(c),
                         Err(e) => Page::Error(format!("Cannot create session: {e}")),
                     });
-                } else if (click.is_some_and(|(x,y)| Rect { x:95,y:399,w:610,h:45 }.contains(x,y))
+                } else if (click.is_some_and(|(x,y)| (Rect { x:95,y:399,w:610,h:45 }).contains(x,y))
                     || window.is_key_pressed(Key::Enter, KeyRepeat::No)) && code_input.len() == 16 {
                     let code = formatted(&code_input);
                     next = Some(match request_teacher(server, &code) {
@@ -179,7 +179,7 @@ pub(super) fn launch(server: &str) -> Result<()> {
                 if click.is_some_and(|(x,y)| PRIMARY.contains(x,y)) {
                     if let Some(cb) = clipboard.as_mut() { let _ = cb.set_text(c.code.clone()); }
                 }
-                if click.is_some_and(|(x,y)| Rect { x:95,y:360,w:610,h:50 }.contains(x,y)) {
+                if click.is_some_and(|(x,y)| (Rect { x:95,y:360,w:610,h:50 }).contains(x,y)) {
                     stop_student(server,c); next = Some(Page::Home);
                 } else if last_poll.elapsed() >= Duration::from_millis(650) {
                     last_poll = Instant::now();
