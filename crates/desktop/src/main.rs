@@ -235,8 +235,13 @@ fn teacher_viewer(server: &str, code: &str, token: String) -> Result<()> {
     let address = websocket_url(server, &code, "teacher")?;
     let active = Arc::new(AtomicBool::new(true));
     let network_active = Arc::clone(&active);
+    let disconnect_url = api(server, &format!("/v1/sessions/{code}/disconnect"));
     thread::spawn(move || {
-        let Ok(mut socket) = connect_socket(&address, &token) else { network_active.store(false, Ordering::SeqCst); return; };
+        // Revoke on ALL exit paths, including failed WS handshake, network drop,
+        // user closing the borderless viewer and Escape. Never leave an approved
+        // teacher token usable merely because the window has disappeared.
+        let connected = connect_socket(&address, &token);
+        if let Ok(mut socket) = connected {
         while network_active.load(Ordering::SeqCst) {
             while let Ok(cmd) = from_ui.try_recv() {
                 if socket.send(Message::Text(cmd)).is_err() { network_active.store(false, Ordering::SeqCst); break; }
@@ -258,6 +263,12 @@ fn teacher_viewer(server: &str, code: &str, token: String) -> Result<()> {
             }
         }
         let _ = socket.close(None);
+        }
+        network_active.store(false, Ordering::SeqCst);
+        // Server-side revocation is best-effort during network loss; the server
+        // must additionally expire credentials and enforce authorization per
+        // message. Never retry with the same token after disconnect.
+        let _ = token_post(&disconnect_url, &token, json!({}));
     });
     // Borderless viewer sized to the teacher's primary monitor.
     // Native fullscreen/minimize support still requires final device testing.
