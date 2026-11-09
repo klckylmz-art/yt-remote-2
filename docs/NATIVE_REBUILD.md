@@ -67,3 +67,9 @@ lipo dist/YTRemote.app/Contents/MacOS/YTRemote -verify_arch "$arch"
 ```
 
 The earlier section incorrectly claimed the opposite order was correct; **that claim is superseded by the actual runner log**. The workflow is corrected in commit `20e7aa5`. This is a source-level fix pending a new CI run; do not mark either macOS build verified until its new packaging and artifact-upload jobs pass. The 2026-11-09 run demonstrated successful Ubuntu and Windows jobs and failed macOS verification; it did not test real installations or cross-network control.
+
+## 2026-11-09 — stalled relay writes
+
+Previously the relay awaited WebSocket sends without a timeout. A peer that stops reading could suspend a relay task inside a send and delay periodic consent checks. Frame, input and close writes now have a two-second timeout; a timed-out frame/input send ends that relay task. A Tokio regression test checks timeout behavior against a permanently pending future. This is not a live network test and does not prove zero in-flight bytes after STOP. Real backpressure, held-key release and revocation tests remain necessary. No successful CI result for this change has yet been observed.
+
+The earlier macOS CI run 42607323960 compiled Windows x64, macOS arm64 and macOS Intel, but both macOS jobs failed the lipo validation step. Its log specified `usage: lipo <input_file> <command>`; the branch now places the input path first. A newer green run is needed to confirm the fix and artifact upload.
