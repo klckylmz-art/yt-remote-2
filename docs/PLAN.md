@@ -38,3 +38,8 @@ No microphone, audio, camera, file transfer or clipboard sync. IP addresses, por
 - On a student WebSocket exit, the relay now ends the student code and invalidates any teacher token. On a teacher WebSocket exit, it invalidates that teacher token and ends the approved session. A consent gate failure also follows the same cleanup path.
 - Added a Rust unit regression for both roles' socket-exit revocation; the test exercises the revocation helper and session store, **not** an actual network socket or operating-system key release. Rust CI and physical-device results for this change are not yet verified.
 - Remaining security gap: socket close is not instantaneous proof of a lost peer. Until heartbeat/lease enforcement, in-flight frame/input race tests, and native held-key release on disconnect are verified, STOP/network-drop safety is not release-ready.
+
+## macOS architecture verification fix (2026-11-09; pending rerun)
+- Examined Actions run `42607323960`: Ubuntu session/relay and Windows x64 jobs succeeded; both macOS jobs compiled, tested, built, and packaged successfully, but failed at the `Verify macOS bundle and create SHA256 manifest` step. This is not evidence of a Rust compile failure or a billing-related runner startup failure.
+- Corrected `lipo` invocation to `lipo -verify_arch "$arch" <bundle executable>` so the tool receives the architecture before the binary. The existing CI step now acts as an architecture regression gate for both `arm64` and `x86_64`, followed by nonempty ZIP/DMG checks and SHA256 generation.
+- **Not yet verified:** CI rerun of this change, artifact upload, physical launch/install, screen permissions, or cross-network operation. Do not mark Stage 0 or release gates complete until new run logs confirm them.
