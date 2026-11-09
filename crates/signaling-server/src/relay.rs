@@ -71,6 +71,13 @@ fn valid_input(raw: &str) -> bool {
         Err(_) => false,
     }
 }
+// Called only after SessionStore has validated the code and bearer token.
+fn canonical_channel_key(code: &str) -> String {
+    code.chars()
+        .filter(|c| *c != '-')
+        .flat_map(char::to_uppercase)
+        .collect()
+}
 fn approved(app: &App, code: &str, token: &str, student: bool) -> bool {
     if student {
         matches!(app.sessions.student_status(code, token), Ok((Status::Approved, _)))
@@ -91,7 +98,11 @@ pub(crate) async fn ws_handler(
     if !approved(&app, &code, token, student) { return Err(StatusCode::FORBIDDEN); }
     // The bearer is never included in an invitation and is never logged.
     let token = token.to_owned();
-    let channels = app.relay.channels(&code);
+    // SessionStore accepts lowercase and hyphen-free codes. All such aliases
+    // must share the same relay channels, otherwise approved peers can connect
+    // successfully yet never exchange video or input.
+    let channel_key = canonical_channel_key(&code);
+    let channels = app.relay.channels(&channel_key);
     Ok(ws.max_message_size(FRAME_LIMIT + 1024)
         .max_frame_size(FRAME_LIMIT + 1024)
         .on_upgrade(move |socket| relay_socket(socket, app, code, token, student, channels)))
@@ -164,6 +175,24 @@ mod tests {
         assert!(!valid_input(r#"{"kind":"file","path":"/tmp/a"}"#));
         assert!(!valid_input(r#"{"kind":"move","x":50,"y":0.2}"#));
         assert!(!valid_input(r#"{"kind":"key","name":"ctrl+c","pressed":true}"#));
+    }
+    #[test]
+    fn approved_code_aliases_use_identical_relay_channels() {
+        use super::{canonical_channel_key, RelayHub};
+        let hub = RelayHub::default();
+        let canonical = "ABCD-EFGH-JKLM-NPQR";
+        let lower = "abcd-efgh-jklm-npqr";
+        let compact = "ABCDEFGHJKLMNPQR";
+        assert_eq!(canonical_channel_key(canonical), canonical_channel_key(lower));
+        assert_eq!(canonical_channel_key(canonical), canonical_channel_key(compact));
+        let first = hub.channels(&canonical_channel_key(canonical));
+        let second = hub.channels(&canonical_channel_key(lower));
+        let third = hub.channels(&canonical_channel_key(compact));
+        assert!(std::sync::Arc::ptr_eq(&first, &second));
+        assert!(std::sync::Arc::ptr_eq(&first, &third));
+        let mut receiver = second.frames.subscribe();
+        first.frames.send(vec![0xff, 0xd8, 0xff, 0xd9]).unwrap();
+        assert_eq!(receiver.try_recv().unwrap(), vec![0xff, 0xd8, 0xff, 0xd9]);
     }
     #[test]
     fn relay_refuses_access_until_approval_and_after_revocation() {
