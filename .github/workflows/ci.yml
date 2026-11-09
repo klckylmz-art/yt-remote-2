@@ -92,7 +92,7 @@ jobs:
             macOS-Intel) arch=x86_64 ;;
             *) exit 1 ;;
           esac
-          lipo dist/YTRemote.app/Contents/MacOS/YTRemote -verify_arch "$arch"
+          lipo -verify_arch "$arch" dist/YTRemote.app/Contents/MacOS/YTRemote
           test -s "dist/YTRemote-${{ matrix.name }}.zip"
           test -s "dist/YTRemote-${{ matrix.name }}.dmg"
           cd dist
