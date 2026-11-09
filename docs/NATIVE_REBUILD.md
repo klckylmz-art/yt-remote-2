@@ -19,3 +19,7 @@ Student creates a single XXXX-XXXX-XXXX-XXXX code; teacher submits it; the stude
 5. Build and install real .exe/.app/.dmg artifacts, verify SHA256 and cross-network tests before a stable release.
 
 This document and the accompanying test do not certify any OS build, RustDesk integration, public relay, or working installer.
+
+## Current security regression coverage (source changes; CI pending)
+
+The session store now clears the teacher bearer token and pending request identifier on both student STOP and student DENY. The denial regression asserts the old teacher credential returns `Unauthorized` and the student's pending request ID is absent. This does not by itself prove that a previously established WebSocket stops immediately: a live relay test is still required, including held-key release and in-flight frame cancellation.
