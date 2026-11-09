@@ -131,6 +131,32 @@ impl SessionStore {
         e.status = Status::Waiting;
         Ok(())
     }
+    /// Teacher-initiated disconnect revokes the current credential immediately.
+    /// Pending requests return to Waiting; an approved session is terminal and
+    /// requires a new student-generated code and explicit approval.
+    pub fn disconnect_teacher(&self, raw: &str, teacher_secret: &str) -> Result<(), Error> {
+        let code = normalized(raw)?;
+        let mut all = self.inner.lock().expect("mutex poisoned");
+        let e = all.get_mut(&code).ok_or(Error::NotFound)?;
+        if !e.teacher_secret.as_deref().is_some_and(|expected| secret_matches(expected, teacher_secret)) {
+            return Err(Error::Unauthorized);
+        }
+        if Instant::now() >= e.expires_at {
+            e.teacher_secret = None;
+            e.request_id = None;
+            e.status = Status::Expired;
+            return Err(Error::Expired);
+        }
+        let next = match e.status {
+            Status::Requested => Status::Waiting,
+            Status::Approved => Status::Ended,
+            _ => return Err(Error::InvalidState),
+        };
+        e.teacher_secret = None;
+        e.request_id = None;
+        e.status = next;
+        Ok(())
+    }
     pub fn can_stream(&self, raw: &str, teacher_secret: &str) -> bool {
         self.teacher_status(raw, teacher_secret) == Ok(Status::Approved)
     }
@@ -276,6 +302,26 @@ mod tests {
         assert_eq!(sessions.student_status(&pending.code, &pending.student_secret).unwrap(), (Status::Ended, None));
         assert_eq!(sessions.teacher_status(&pending.code, &waiting_teacher.teacher_secret), Err(Error::Unauthorized));
         assert_eq!(sessions.decide(&pending.code, &pending.student_secret, &waiting_teacher.request_id, true), Err(Error::InvalidRequest));
+    }
+
+    #[test]
+    fn teacher_disconnect_revokes_approved_and_pending_tokens() {
+        let sessions = SessionStore::new();
+        let student = sessions.create(Duration::from_secs(900)).unwrap();
+        let teacher = sessions.request(&student.code).unwrap();
+        assert_eq!(sessions.disconnect_teacher(&student.code, "invalid"), Err(Error::Unauthorized));
+        sessions.disconnect_teacher(&student.code, &teacher.teacher_secret).unwrap();
+        assert_eq!(sessions.student_status(&student.code, &student.student_secret).unwrap(), (Status::Waiting, None));
+        assert_eq!(sessions.teacher_status(&student.code, &teacher.teacher_secret), Err(Error::Unauthorized));
+        assert_eq!(sessions.decide(&student.code, &student.student_secret, &teacher.request_id, true), Err(Error::InvalidRequest));
+        let next = sessions.request(&student.code).unwrap();
+        sessions.decide(&student.code, &student.student_secret, &next.request_id, true).unwrap();
+        assert!(sessions.can_stream(&student.code, &next.teacher_secret));
+        sessions.disconnect_teacher(&student.code, &next.teacher_secret).unwrap();
+        assert!(!sessions.can_stream(&student.code, &next.teacher_secret));
+        assert_eq!(sessions.teacher_status(&student.code, &next.teacher_secret), Err(Error::Unauthorized));
+        assert_eq!(sessions.student_status(&student.code, &student.student_secret).unwrap(), (Status::Ended, None));
+        assert_eq!(sessions.request(&student.code), Err(Error::InvalidState));
     }
 
     #[test]
