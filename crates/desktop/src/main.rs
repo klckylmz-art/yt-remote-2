@@ -269,10 +269,10 @@ fn main() {
     let result = match args.as_slice() {
         [_, role] if role == "student" => student(&server),
         [_, role, code] if role == "teacher" => teacher(&server, code),
+        [_] => gui::launch(&server),
         _ => {
-            eprintln!("YT Remote development build\nUsage: yt-remote-desktop student | teacher STUDENT_CODE");
-            eprintln!("Set YT_REMOTE_SERVER to a trusted TLS-enabled relay server.");
-            return;
+            eprintln!("YT Remote: launch without arguments for the graphical interface.");
+            eprintln!("Developer mode: student | teacher STUDENT_CODE");
         }
     };
     if let Err(err) = result { eprintln!("YT Remote error: {err}"); std::process::exit(1); }
