@@ -1,3 +1,4 @@
+#![cfg_attr(all(target_os = "windows", not(debug_assertions)), windows_subsystem = "windows")]
 //! Development desktop transport, not a production-grade remote desktop release.
 //! Local OS screen-capture and input permissions are required.
 use enigo::{Button, Coordinate, Direction, Enigo, Key as EKey, Keyboard, Mouse, Settings};
