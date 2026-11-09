@@ -65,8 +65,15 @@ fn valid_input(raw: &str) -> bool {
         Ok(InputCommand::Scroll { delta }) => (-5..=5).contains(&delta),
         Ok(InputCommand::Key { name, pressed }) => {
             let _ = pressed;
-            !name.is_empty() && name.len() <= 32
-                && name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
+            // Keep the relay's key allowlist identical to the native input
+            // handler. Unknown names must not be forwarded or stored as
+            // permanently held keys on the student's computer.
+            matches!(name.as_str(),
+                "enter" | "escape" | "backspace" | "tab" | "space"
+                | "left" | "right" | "up" | "down" | "delete"
+                | "leftctrl" | "rightctrl" | "leftshift" | "rightshift"
+                | "leftalt" | "rightalt")
+                || (name.len() == 1 && name.bytes().all(|b| b.is_ascii_alphanumeric()))
         }
         Err(_) => false,
     }
@@ -175,6 +182,11 @@ mod tests {
         assert!(!valid_input(r#"{"kind":"file","path":"/tmp/a"}"#));
         assert!(!valid_input(r#"{"kind":"move","x":50,"y":0.2}"#));
         assert!(!valid_input(r#"{"kind":"key","name":"ctrl+c","pressed":true}"#));
+        assert!(!valid_input(r#"{"kind":"key","name":"unhandled_key","pressed":true}"#));
+        assert!(!valid_input(r#"{"kind":"key","name":"super","pressed":true}"#));
+        assert!(!valid_input(r#"{"kind":"key","name":"a","pressed":"true"}"#));
+        assert!(valid_input(r#"{"kind":"key","name":"leftshift","pressed":false}"#));
+        assert!(valid_input(r#"{"kind":"key","name":"z","pressed":true}"#));
     }
     #[test]
     fn approved_code_aliases_use_identical_relay_channels() {
