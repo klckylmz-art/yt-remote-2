@@ -72,6 +72,10 @@ async fn decide(
     app.sessions.decide(&code, bearer(&headers)?, &body.request_id, allow).map_err(http_error)?;
     Ok(StatusCode::NO_CONTENT)
 }
+async fn cancel(Path(code): Path<String>, State(app): State<App>, headers: HeaderMap) -> Result<StatusCode, StatusCode> {
+    app.sessions.cancel_request(&code, bearer(&headers)?).map_err(http_error)?;
+    Ok(StatusCode::NO_CONTENT)
+}
 async fn stop(Path(code): Path<String>, State(app): State<App>, headers: HeaderMap) -> Result<StatusCode, StatusCode> {
     app.sessions.end(&code, bearer(&headers)?).map_err(http_error)?;
     Ok(StatusCode::NO_CONTENT)
@@ -87,6 +91,7 @@ async fn main() {
         .route("/v1/sessions/:code/teacher", get(teacher_status))
         .route("/v1/sessions/:code/:action", post(decide))
         .route("/v1/sessions/:code/end", post(stop))
+        .route("/v1/sessions/:code/cancel", post(cancel))
         .route("/v1/sessions/:code/ws/:role", get(relay::ws_handler))
         .with_state(App { sessions: SessionStore::new(), relay: relay::RelayHub::default() });
     // Localhost by default; a private Docker network may override this address.
