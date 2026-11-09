@@ -15,6 +15,21 @@ use xcap::Monitor;
 mod gui;
 type Result<T> = std::result::Result<T, Box<dyn Error>>;
 
+fn validate_server(base: &str) -> Result<()> {
+    let base = base.trim_end_matches('/');
+    if base.starts_with("https://") {
+        return Ok(());
+    }
+    // Never transmit session bearer tokens over cleartext HTTP outside loopback.
+    if let Some(authority) = base.strip_prefix("http://") {
+        let host = authority.split('/').next().unwrap_or("");
+        if matches!(host, "127.0.0.1:8080" | "localhost:8080" | "[::1]:8080"
+            | "127.0.0.1" | "localhost" | "[::1]") {
+            return Ok(());
+        }
+    }
+    Err("Remote signaling requires HTTPS; insecure HTTP is permitted only on loopback.".into())
+}
 fn api(base: &str, route: &str) -> String {
     format!("{}{}", base.trim_end_matches('/'), route)
 }
@@ -305,6 +320,10 @@ fn teacher_viewer(server: &str, code: &str, token: String) -> Result<()> {
 }
 fn main() {
     let server = env::var("YT_REMOTE_SERVER").unwrap_or_else(|_| "http://127.0.0.1:8080".into());
+    if let Err(err) = validate_server(&server) {
+        eprintln!("YT Remote configuration error: {err}");
+        std::process::exit(1);
+    }
     let args: Vec<String> = env::args().collect();
     let result = match args.as_slice() {
         [_, role] if role == "student" => student(&server),
@@ -317,4 +336,18 @@ fn main() {
         }
     };
     if let Err(err) = result { eprintln!("YT Remote error: {err}"); std::process::exit(1); }
+}
+
+#[cfg(test)]
+mod security_tests {
+    use super::validate_server;
+    #[test]
+    fn rejects_cleartext_remote_signaling() {
+        assert!(validate_server("http://127.0.0.1:8080").is_ok());
+        assert!(validate_server("http://localhost:8080").is_ok());
+        assert!(validate_server("https://relay.example.org").is_ok());
+        assert!(validate_server("http://relay.example.org:8080").is_err());
+        assert!(validate_server("http://192.168.1.4:8080").is_err());
+        assert!(validate_server("ftp://relay.example.org").is_err());
+    }
 }
