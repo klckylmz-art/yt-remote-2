@@ -29,3 +29,11 @@ The session store now clears the teacher bearer token and pending request identi
 `POST /v1/sessions/{code}/disconnect` requires the current teacher bearer credential. For a pending request it clears the request and returns the student to Waiting; for an approved request it revokes the teacher token and ends the student session. Reusing the old token must return Unauthorized. The new unit test covers pending and approved disconnects, invalid bearer credentials, replay rejection and fresh approval after a canceled pending request. This is **not** yet wired to every native viewer exit path, and does not guarantee in-flight WebSocket frames or held input are flushed. These remain mandatory integration/device tests.
 
 CI job logs were not retrievable through the available commit-run lookup (no PR-triggered runs returned); no Windows/macOS build or local Rust test success is asserted. Do not treat missing CI evidence as a passing check or as a compiler failure.
+
+## Verified CI failure diagnosis (run 42607323960, 2026-11-09)
+
+- Ubuntu session-and-relay: success (check and tests).
+- Windows x64: success (workspace check, tests, release build, SHA256 manifest, prototype artifact upload).
+- macOS ARM64 and Intel: workspace check, tests, release build and ad-hoc app/DMG packaging succeeded; both failed in the subsequent architecture-verification step.
+- Actual error: `lipo: unknown architecture specification flag: dist/YTRemote.app/Contents/MacOS/YTRemote in specifying -verify_arch operation`. The workflow incorrectly supplied `-verify_arch` before the input file. Correct invocation is `lipo <binary> -verify_arch <arch>`.
+- The workflow change fixes this observed CI command error only. Its own CI run, generated checksums and uploads must be verified before claiming success. These CI jobs are not physical-device or cross-network tests.
