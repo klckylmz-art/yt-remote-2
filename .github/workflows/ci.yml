@@ -18,6 +18,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
+      - name: Show toolchain and target
+        run: rustc -vV
       - name: Check security gate and relay
         run: cargo check -p yt-session-core -p yt-signaling-server --all-targets
       - name: Test consent and command validation
@@ -40,23 +42,59 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - name: Verify expected native architecture
+        shell: bash
+        run: |
+          rustc -vV
+          case "${{ matrix.name }}" in
+            Windows-x64) expected=x86_64-pc-windows-msvc ;;
+            macOS-Apple-Silicon) expected=aarch64-apple-darwin ;;
+            macOS-Intel) expected=x86_64-apple-darwin ;;
+            *) echo "Unknown platform" >&2; exit 1 ;;
+          esac
+          actual="$(rustc -vV | sed -n 's/^host: //p')"
+          test "$actual" = "$expected" || { echo "Expected $expected, got $actual" >&2; exit 1; }
       - name: Compile full workspace
         run: cargo check --workspace --all-targets
       - name: Run all unit tests
         run: cargo test --workspace
       - name: Build native desktop prototype
         run: cargo build --release -p yt-remote-desktop
+      - name: Generate Windows SHA256 manifest
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $binary = 'target/release/yt-remote-desktop.exe'
+          if (-not (Test-Path $binary)) { throw "Missing Windows binary" }
+          $hash = (Get-FileHash $binary -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  yt-remote-desktop.exe" | Set-Content -Encoding ascii target/release/SHA256SUMS.txt
       - name: Upload Windows prototype (not a release)
         if: runner.os == 'Windows'
         uses: actions/upload-artifact@v4
         with:
           name: YT-Remote-2-${{ matrix.name }}-UNTESTED
-          path: target/release/yt-remote-desktop.exe
+          path: |
+            target/release/yt-remote-desktop.exe
+            target/release/SHA256SUMS.txt
           if-no-files-found: error
       - name: Package ad-hoc signed macOS app and dmg
         if: runner.os == 'macOS'
         shell: bash
         run: bash packaging/macos/package.sh "${{ matrix.name }}"
+      - name: Verify macOS bundle and create SHA256 manifest
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          test -x dist/YTRemote.app/Contents/MacOS/YTRemote
+          file dist/YTRemote.app/Contents/MacOS/YTRemote
+          case "${{ matrix.name }}" in
+            macOS-Apple-Silicon) arch=arm64 ;;
+            macOS-Intel) arch=x86_64 ;;
+            *) exit 1 ;;
+          esac
+          lipo -verify_arch "$arch" dist/YTRemote.app/Contents/MacOS/YTRemote
+          cd dist
+          shasum -a 256 "YTRemote-${{ matrix.name }}.zip" "YTRemote-${{ matrix.name }}.dmg" > "SHA256SUMS-${{ matrix.name }}.txt"
       - name: Upload macOS app and dmg (untested)
         if: runner.os == 'macOS'
         uses: actions/upload-artifact@v4
@@ -65,4 +103,5 @@ jobs:
           path: |
             dist/YTRemote-${{ matrix.name }}.zip
             dist/YTRemote-${{ matrix.name }}.dmg
+            dist/SHA256SUMS-${{ matrix.name }}.txt
           if-no-files-found: error
