@@ -94,6 +94,22 @@ impl SessionStore {
         e.status = if allow { Status::Approved } else { Status::Denied };
         Ok(())
     }
+    /// Cancel a pending teacher request without invalidating the student's code.
+    /// A canceled teacher token cannot authorize a later approval.
+    pub fn cancel_request(&self, raw: &str, teacher_secret: &str) -> Result<(), Error> {
+        let code = normalized(raw)?;
+        let mut all = self.inner.lock().expect("mutex poisoned");
+        let e = all.get_mut(&code).ok_or(Error::NotFound)?;
+        if e.teacher_secret.as_deref() != Some(teacher_secret) {
+            return Err(Error::Unauthorized);
+        }
+        if Instant::now() >= e.expires_at { e.status = Status::Expired; return Err(Error::Expired); }
+        if e.status != Status::Requested { return Err(Error::InvalidState); }
+        e.teacher_secret = None;
+        e.request_id = None;
+        e.status = Status::Waiting;
+        Ok(())
+    }
     pub fn can_stream(&self, raw: &str, teacher_secret: &str) -> bool {
         self.teacher_status(raw, teacher_secret) == Ok(Status::Approved)
     }
@@ -130,6 +146,24 @@ mod tests {
         s.decide(&st.code, &st.student_secret, &teacher.request_id, false).unwrap();
         assert!(!s.can_stream(&st.code, &teacher.teacher_secret));
         assert_eq!(s.decide(&st.code, &st.student_secret, &teacher.request_id, true), Err(Error::InvalidRequest));
+    }
+    #[test]
+    fn cancelled_teacher_request_cannot_be_approved_or_reused() {
+        let s = SessionStore::new();
+        let st = s.create(Duration::from_secs(900)).unwrap();
+        let first = s.request(&st.code).unwrap();
+        assert_eq!(s.cancel_request(&st.code, "wrong"), Err(Error::Unauthorized));
+        assert_eq!(s.student_status(&st.code, &st.student_secret).unwrap().0, Status::Requested);
+        s.cancel_request(&st.code, &first.teacher_secret).unwrap();
+        assert_eq!(s.student_status(&st.code, &st.student_secret).unwrap(), (Status::Waiting, None));
+        assert_eq!(s.teacher_status(&st.code, &first.teacher_secret), Err(Error::Unauthorized));
+        assert_eq!(s.decide(&st.code, &st.student_secret, &first.request_id, true), Err(Error::InvalidRequest));
+        let second = s.request(&st.code).unwrap();
+        assert_ne!(first.teacher_secret, second.teacher_secret);
+        assert!(!s.can_stream(&st.code, &first.teacher_secret));
+        s.decide(&st.code, &st.student_secret, &second.request_id, true).unwrap();
+        assert!(s.can_stream(&st.code, &second.teacher_secret));
+        assert!(!s.can_stream(&st.code, &first.teacher_secret));
     }
     #[test]
     fn invalid_and_expired_codes_fail() {
