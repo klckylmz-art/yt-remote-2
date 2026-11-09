@@ -325,6 +325,41 @@ mod tests {
     }
 
     #[test]
+    fn concurrent_stop_and_stream_authorization_never_reenable_access() {
+        use std::sync::{atomic::{AtomicBool, Ordering}, Barrier};
+        use std::thread;
+        let sessions = SessionStore::new();
+        let student = sessions.create(Duration::from_secs(900)).unwrap();
+        let teacher = sessions.request(&student.code).unwrap();
+        sessions.decide(&student.code, &student.student_secret, &teacher.request_id, true).unwrap();
+        let barrier = Arc::new(Barrier::new(2));
+        let stopped = Arc::new(AtomicBool::new(false));
+        let worker_sessions = sessions.clone();
+        let code = student.code.clone();
+        let token = teacher.teacher_secret.clone();
+        let worker_barrier = Arc::clone(&barrier);
+        let worker_stopped = Arc::clone(&stopped);
+        let worker = thread::spawn(move || {
+            worker_barrier.wait();
+            for _ in 0..10_000 {
+                // Only assert after STOP has completed; authorization before
+                // revocation may legitimately succeed.
+                if worker_stopped.load(Ordering::Acquire) {
+                    assert!(!worker_sessions.can_stream(&code, &token));
+                } else {
+                    let _ = worker_sessions.can_stream(&code, &token);
+                }
+            }
+        });
+        barrier.wait();
+        sessions.end(&student.code, &student.student_secret).unwrap();
+        stopped.store(true, Ordering::Release);
+        worker.join().unwrap();
+        assert!(!sessions.can_stream(&student.code, &teacher.teacher_secret));
+        assert_eq!(sessions.teacher_status(&student.code, &teacher.teacher_secret), Err(Error::Unauthorized));
+    }
+
+    #[test]
     fn invalid_and_expired_codes_fail() {
         let s = SessionStore::new();
         assert_eq!(s.request("127.0.0.1:8080"), Err(Error::InvalidCode));
