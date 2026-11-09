@@ -104,7 +104,15 @@ impl SessionStore {
         if !secret_matches(&e.student_secret, student_secret) { return Err(Error::Unauthorized); }
         if Instant::now() >= e.expires_at { e.status = Status::Expired; return Err(Error::Expired); }
         if e.status != Status::Requested || e.request_id.as_deref() != Some(request_id) { return Err(Error::InvalidRequest); }
-        e.status = if allow { Status::Approved } else { Status::Denied };
+        if allow {
+            e.status = Status::Approved;
+        } else {
+            // A denied request must not retain a usable teacher credential or
+            // request identifier. Any retry requires a new student code.
+            e.teacher_secret = None;
+            e.request_id = None;
+            e.status = Status::Denied;
+        }
         Ok(())
     }
     /// Cancel a pending teacher request without invalidating the student's code.
@@ -182,6 +190,8 @@ mod tests {
         let teacher = s.request(&st.code).unwrap();
         s.decide(&st.code, &st.student_secret, &teacher.request_id, false).unwrap();
         assert!(!s.can_stream(&st.code, &teacher.teacher_secret));
+        assert_eq!(s.teacher_status(&st.code, &teacher.teacher_secret), Err(Error::Unauthorized));
+        assert_eq!(s.student_status(&st.code, &st.student_secret).unwrap(), (Status::Denied, None));
         assert_eq!(s.decide(&st.code, &st.student_secret, &teacher.request_id, true), Err(Error::InvalidRequest));
     }
     #[test]
