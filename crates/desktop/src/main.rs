@@ -11,6 +11,7 @@ use std::{
 };
 use tungstenite::{client::IntoClientRequest, stream::MaybeTlsStream, Error as WsError, Message};
 use xcap::Monitor;
+mod gui;
 type Result<T> = std::result::Result<T, Box<dyn Error>>;
 
 fn api(base: &str, route: &str) -> String {
@@ -133,6 +134,28 @@ fn student(server: &str) -> Result<()> {
         let mut input = String::new(); let _ = io::stdin().read_line(&mut input);
         stop.store(false, Ordering::SeqCst);
     });
+    stream_student(server, &code, &token, &running)
+
+}
+fn teacher(server: &str, code: &str) -> Result<()> {
+    let code = code.trim().to_ascii_uppercase();
+    let session: Value = ureq::post(&api(server, &format!("/v1/sessions/{code}/request")))
+        .call()?.into_json()?;
+    let token = session["teacher_token"].as_str().ok_or("missing token")?.to_owned();
+    println!("Waiting for student permission...");
+    loop {
+        let status = token_get(&api(server, &format!("/v1/sessions/{code}/teacher")), &token)?;
+        match status["status"].as_str().unwrap_or("") {
+            "approved" => break,
+            "requested" => thread::sleep(Duration::from_millis(500)),
+            "denied" => return Err("The student denied access".into()),
+            _ => return Err("Session expired or ended".into()),
+        }
+    }
+    teacher_viewer(server, &code, token)
+
+}
+fn stream_student(server: &str, code: &str, token: &str, running: &Arc<AtomicBool>) -> Result<()> {
     let mut socket = connect_socket(&websocket_url(server, &code, "student")?, &token)?;
     let monitor = Monitor::all()?.into_iter().next().ok_or("No monitor found")?;
     let mut enigo = Enigo::new(&Settings::default())?;
@@ -169,21 +192,7 @@ fn student(server: &str) -> Result<()> {
     println!("Screen sharing stopped.");
     sharing_result
 }
-fn teacher(server: &str, code: &str) -> Result<()> {
-    let code = code.trim().to_ascii_uppercase();
-    let session: Value = ureq::post(&api(server, &format!("/v1/sessions/{code}/request")))
-        .call()?.into_json()?;
-    let token = session["teacher_token"].as_str().ok_or("missing token")?.to_owned();
-    println!("Waiting for student permission...");
-    loop {
-        let status = token_get(&api(server, &format!("/v1/sessions/{code}/teacher")), &token)?;
-        match status["status"].as_str().unwrap_or("") {
-            "approved" => break,
-            "requested" => thread::sleep(Duration::from_millis(500)),
-            "denied" => return Err("The student denied access".into()),
-            _ => return Err("Session expired or ended".into()),
-        }
-    }
+fn teacher_viewer(server: &str, code: &str, token: String) -> Result<()> {
     let (to_ui, from_network) = mpsc::sync_channel::<Vec<u32>>(2);
     let (to_network, from_ui) = mpsc::channel::<String>();
     let address = websocket_url(server, &code, "teacher")?;
