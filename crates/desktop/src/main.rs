@@ -217,6 +217,16 @@ fn stream_student(server: &str, code: &str, token: &str, running: &Arc<AtomicBoo
     println!("Screen sharing stopped.");
     sharing_result
 }
+// Local-only viewer overlay. This is never transmitted to the remote peer.
+fn draw_disconnect(pixels: &mut [u32]) {
+    for py in 0..36 { for px in 1240..1280 {
+        pixels[py * 1280 + px] = 0x882f43;
+    }}
+    for i in 12..26 {
+        pixels[i * 1280 + (1247 + (i - 12))] = 0xffffff;
+        pixels[i * 1280 + (1260 - (i - 12))] = 0xffffff;
+    }
+}
 fn teacher_viewer(server: &str, code: &str, token: String) -> Result<()> {
     let (to_ui, from_network) = mpsc::sync_channel::<Vec<u32>>(2);
     let (to_network, from_ui) = mpsc::channel::<String>();
@@ -263,6 +273,8 @@ fn teacher_viewer(server: &str, code: &str, token: String) -> Result<()> {
     window.set_position(0, 0);
     window.set_target_fps(60);
     let mut pixels = vec![0_u32; 1280 * 720];
+    // Keep the decoded remote frame immutable when painting local controls.
+    let mut display_pixels = vec![0_u32; 1280 * 720];
     let mut previous_mouse = None;
     let mut old_left = false;
     let mut old_right = false;
@@ -273,10 +285,10 @@ fn teacher_viewer(server: &str, code: &str, token: String) -> Result<()> {
             if x >= (viewer_width.saturating_sub(48)) as f32 && y < 48.0 {
                 if window.get_mouse_down(MouseButton::Left) { break; }
                 // Never inject a click into the student's display from this control.
-                for py in 0..36 { for px in 1240..1280 {
-                    pixels[py * 1280 + px] = 0x882f43;
-                }}
-                window.update_with_buffer(&pixels, 1280, 720)?;
+                // Paint on a separate buffer to avoid permanently overwriting video pixels.
+                display_pixels.copy_from_slice(&pixels);
+                draw_disconnect(&mut display_pixels);
+                window.update_with_buffer(&display_pixels, 1280, 720)?;
                 continue;
             }
             let x = (f64::from(x) / viewer_width as f64).clamp(0.0,1.0);
@@ -304,15 +316,10 @@ fn teacher_viewer(server: &str, code: &str, token: String) -> Result<()> {
             let name = format!("{key:?}").to_ascii_lowercase();
             let _ = to_network.send(json!({"kind":"key","name":name,"pressed":false}).to_string());
         }
-        // Small upper-right disconnect target; never part of the remote screen data.
-        for py in 0..36 { for px in 1240..1280 {
-            pixels[py * 1280 + px] = 0x882f43;
-        }}
-        for i in 12..26 {
-            pixels[i * 1280 + (1247 + (i - 12))] = 0xffffff;
-            pixels[i * 1280 + (1260 - (i - 12))] = 0xffffff;
-        }
-        window.update_with_buffer(&pixels, 1280, 720)?;
+        // The local overlay must never modify the remote frame.
+        display_pixels.copy_from_slice(&pixels);
+        draw_disconnect(&mut display_pixels);
+        window.update_with_buffer(&display_pixels, 1280, 720)?;
     }
     active.store(false, Ordering::SeqCst);
     println!("Disconnected.");
