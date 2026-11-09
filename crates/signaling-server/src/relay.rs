@@ -15,6 +15,8 @@ use crate::{bearer, App};
 const FRAME_LIMIT: usize = 3 * 1024 * 1024;
 const INPUT_LIMIT: usize = 4096;
 const CHANNEL_CAPACITY: usize = 4;
+// A stalled socket must not indefinitely block consent revocation checks.
+const SEND_TIMEOUT: Duration = Duration::from_secs(2);
 
 #[derive(Clone)]
 pub(crate) struct RelayHub {
@@ -129,7 +131,7 @@ async fn relay_socket(
         tokio::select! {
             _ = gate.tick() => {
                 if !approved(&app, &code, &token, student) {
-                    let _ = socket.send(Message::Close(None)).await;
+                    let _ = tokio::time::timeout(SEND_TIMEOUT, socket.send(Message::Close(None))).await;
                     return;
                 }
             }
@@ -153,7 +155,7 @@ async fn relay_socket(
             msg = frames.recv(), if !student => {
                 match msg {
                     Ok(data) if approved(&app, &code, &token, student) => {
-                        if socket.send(Message::Binary(data)).await.is_err() { break; }
+                        if !matches!(tokio::time::timeout(SEND_TIMEOUT, socket.send(Message::Binary(data))).await, Ok(Ok(()))) { break; }
                     }
                     Err(broadcast::error::RecvError::Closed) => break,
                     _ => {}
@@ -162,7 +164,7 @@ async fn relay_socket(
             msg = inputs.recv(), if student => {
                 match msg {
                     Ok(cmd) if approved(&app, &code, &token, student) => {
-                        if socket.send(Message::Text(cmd)).await.is_err() { break; }
+                        if !matches!(tokio::time::timeout(SEND_TIMEOUT, socket.send(Message::Text(cmd))).await, Ok(Ok(()))) { break; }
                     }
                     Err(broadcast::error::RecvError::Closed) => break,
                     _ => {}
@@ -170,11 +172,20 @@ async fn relay_socket(
             }
         }
     }
-    let _ = socket.send(Message::Close(None)).await;
+    let _ = tokio::time::timeout(SEND_TIMEOUT, socket.send(Message::Close(None))).await;
 }
 #[cfg(test)]
 mod tests {
     use super::valid_input;
+    #[tokio::test]
+    async fn stalled_transport_send_is_bounded() {
+        // A peer that stops reading must not pin the relay loop forever.
+        let result = tokio::time::timeout(
+            super::SEND_TIMEOUT,
+            std::future::pending::<Result<(), ()>>(),
+        ).await;
+        assert!(result.is_err());
+    }
     #[test]
     fn rejects_file_transfer_and_unsafe_commands() {
         assert!(valid_input(r#"{"kind":"move","x":0.3,"y":0.9}"#));
