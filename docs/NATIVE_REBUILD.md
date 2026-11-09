@@ -37,3 +37,9 @@ CI job logs were not retrievable through the available commit-run lookup (no PR-
 - macOS ARM64 and Intel: workspace check, tests, release build and ad-hoc app/DMG packaging succeeded; both failed in the subsequent architecture-verification step.
 - Actual error: `lipo: unknown architecture specification flag: dist/YTRemote.app/Contents/MacOS/YTRemote in specifying -verify_arch operation`. The workflow incorrectly supplied `-verify_arch` before the input file. Correct invocation is `lipo <binary> -verify_arch <arch>`.
 - The workflow change fixes this observed CI command error only. Its own CI run, generated checksums and uploads must be verified before claiming success. These CI jobs are not physical-device or cross-network tests.
+
+## Viewer disconnect hardening — 2026-11-09
+
+The teacher's WebSocket worker now attempts the authenticated `POST /v1/sessions/{code}/disconnect` when its viewer closes, the socket closes, the connection drops, or the handshake fails. This avoids leaving an approved teacher token valid after a normal window exit. A session-core regression test verifies that an approved teacher disconnect invalidates its token and requires a newly generated student code and a fresh approval.
+
+**Limits:** HTTP disconnect is best-effort and can fail when the network is down; server-side expiry and authorization checks remain mandatory. The current network worker can block during HTTP calls and this change does not yet guarantee that every in-flight input is released on the student's OS. The server must still enforce per-message consent and the student must release held inputs when its own socket closes. No physical device or cross-network validation has been performed for this change.
