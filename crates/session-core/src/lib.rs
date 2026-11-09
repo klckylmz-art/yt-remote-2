@@ -379,6 +379,43 @@ mod tests {
     }
 
     #[test]
+    fn concurrent_student_stop_and_teacher_approval_cannot_resurrect_session() {
+        use std::sync::Barrier;
+        use std::thread;
+        let sessions = SessionStore::new();
+        let student = sessions.create(Duration::from_secs(900)).unwrap();
+        let teacher = sessions.request(&student.code).unwrap();
+        let barrier = Arc::new(Barrier::new(3));
+        let approval_sessions = sessions.clone();
+        let approval_code = student.code.clone();
+        let approval_secret = student.student_secret.clone();
+        let request_id = teacher.request_id.clone();
+        let approval_barrier = Arc::clone(&barrier);
+        let approval = thread::spawn(move || {
+            approval_barrier.wait();
+            approval_sessions.decide(&approval_code, &approval_secret, &request_id, true)
+        });
+        let stop_sessions = sessions.clone();
+        let stop_code = student.code.clone();
+        let stop_secret = student.student_secret.clone();
+        let stop_barrier = Arc::clone(&barrier);
+        let stop = thread::spawn(move || {
+            stop_barrier.wait();
+            stop_sessions.end(&stop_code, &stop_secret)
+        });
+        barrier.wait();
+        let approval_result = approval.join().unwrap();
+        assert!(matches!(approval_result, Ok(()) | Err(Error::InvalidRequest)));
+        assert_eq!(stop.join().unwrap(), Ok(()));
+        assert!(!sessions.can_stream(&student.code, &teacher.teacher_secret));
+        assert_eq!(sessions.teacher_status(&student.code, &teacher.teacher_secret),
+                   Err(Error::Unauthorized));
+        assert_eq!(sessions.student_status(&student.code, &student.student_secret).unwrap(),
+                   (Status::Ended, None));
+        assert_eq!(sessions.request(&student.code), Err(Error::InvalidState));
+    }
+
+    #[test]
     fn invalid_and_expired_codes_fail() {
         let s = SessionStore::new();
         assert_eq!(s.request("127.0.0.1:8080"), Err(Error::InvalidCode));
