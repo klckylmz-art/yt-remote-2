@@ -68,6 +68,53 @@ jobs:
           if (-not (Test-Path $binary)) { throw "Missing Windows binary" }
           $hash = (Get-FileHash $binary -Algorithm SHA256).Hash.ToLowerInvariant()
           "$hash  yt-remote-desktop.exe" | Set-Content -Encoding ascii target/release/SHA256SUMS.txt
+      - name: Verify Windows checksum manifest
+        shell: pwsh
+        run: |
+          $binary = 'target/release/yt-remote-desktop.exe'
+          $manifest = (Get-Content 'target/release/SHA256SUMS.txt' -Raw).Trim()
+          $expected = ($manifest -split '\\s+')[0]
+          $actual = (Get-FileHash $binary -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($expected -notmatch '^[a-f0-9]{64}
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: YT-Remote-2-${{ matrix.name }}-UNTESTED
+          path: |
+            target/release/yt-remote-desktop.exe
+            target/release/SHA256SUMS.txt
+          if-no-files-found: error
+      - name: Package ad-hoc signed macOS app and dmg
+        if: runner.os == 'macOS'
+        shell: bash
+        run: bash packaging/macos/package.sh "${{ matrix.name }}"
+      - name: Verify macOS bundle and create SHA256 manifest
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          test -x dist/YTRemote.app/Contents/MacOS/YTRemote
+          file dist/YTRemote.app/Contents/MacOS/YTRemote
+          case "${{ matrix.name }}" in
+            macOS-Apple-Silicon) arch=arm64 ;;
+            macOS-Intel) arch=x86_64 ;;
+            *) exit 1 ;;
+          esac
+          lipo -verify_arch "$arch" dist/YTRemote.app/Contents/MacOS/YTRemote
+          codesign --verify --strict --verbose=2 dist/YTRemote.app
+          cd dist
+          shasum -a 256 "YTRemote-${{ matrix.name }}.zip" "YTRemote-${{ matrix.name }}.dmg" > "SHA256SUMS-${{ matrix.name }}.txt"
+          shasum -a 256 -c "SHA256SUMS-${{ matrix.name }}.txt"
+      - name: Upload macOS app and dmg (untested)
+        if: runner.os == 'macOS'
+        uses: actions/upload-artifact@v4
+        with:
+          name: YT-Remote-2-${{ matrix.name }}-UNTESTED
+          path: |
+            dist/YTRemote-${{ matrix.name }}.zip
+            dist/YTRemote-${{ matrix.name }}.dmg
+            dist/SHA256SUMS-${{ matrix.name }}.txt
+          if-no-files-found: error
+ -or $actual -cne $expected) { throw 'Windows SHA256 verification failed' }
       - name: Upload Windows prototype (not a release)
         if: runner.os == 'Windows'
         uses: actions/upload-artifact@v4
