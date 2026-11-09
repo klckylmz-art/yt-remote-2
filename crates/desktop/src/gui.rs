@@ -67,15 +67,25 @@ impl Canvas {
 const PRIMARY: Rect = Rect { x: 95, y: 245, w: 610, h: 55 };
 const APPROVE: Rect = Rect { x: 95, y: 288, w: 610, h: 55 };
 const DENY: Rect = Rect { x: 95, y: 358, w: 610, h: 55 };
+// Prevent a lost server from blocking the native window indefinitely.
+fn http_client() -> ureq::Agent {
+    ureq::AgentBuilder::new()
+        .timeout_connect(Duration::from_secs(3))
+        .timeout_read(Duration::from_secs(5))
+        .timeout_write(Duration::from_secs(5))
+        .build()
+}
 fn start_student(server: &str) -> Result<Credentials> {
-    let response: Value = ureq::post(&api(server, "/v1/sessions")).call()?.into_json()?;
+    let response: Value = http_client().post(&api(server, "/v1/sessions"))
+        .call()?.into_json()?;
     Ok(Credentials {
         code: response["code"].as_str().ok_or("server did not return a code")?.to_owned(),
         token: response["student_token"].as_str().ok_or("server did not return a student token")?.to_owned(),
     })
 }
 fn request_teacher(server: &str, code: &str) -> Result<(String,String)> {
-    let response: Value = ureq::post(&api(server, &format!("/v1/sessions/{code}/request")))
+    let response: Value = http_client()
+        .post(&api(server, &format!("/v1/sessions/{code}/request")))
         .call()?.into_json()?;
     Ok((
         response["teacher_token"].as_str().ok_or("missing teacher token")?.to_owned(),
@@ -219,7 +229,11 @@ pub(super) fn launch(server: &str) -> Result<()> {
                             });
                             Page::Sharing(c.clone(), running)
                         }
-                        Ok(()) => Page::Home,
+                        Ok(()) => {
+                            // Deny also revokes the code so the request cannot be reused.
+                            stop_student(server, c);
+                            Page::Home
+                        }
                         Err(e) => Page::Error(format!("Authorization failed: {e}")),
                     });
                 }
