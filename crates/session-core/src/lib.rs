@@ -64,7 +64,11 @@ impl SessionStore {
         let secret = random_hex(32);
         all.insert(code.clone(), Entry {
             student_secret: secret.clone(), teacher_secret: None, request_id: None,
-            status: Status::Waiting, // Never allow a caller to create an effectively unbounded session.\n            // The HTTP API currently issues 15-minute codes; enforce that\n            // limit at the store boundary as well.\n            expires_at: Instant::now() + ttl.min(Duration::from_secs(900)),
+            status: Status::Waiting,
+            // Never allow a caller to create an effectively unbounded session.
+            // The HTTP API currently issues 15-minute codes; enforce that
+            // limit at the store boundary as well.
+            expires_at: Instant::now() + ttl.min(Duration::from_secs(900)),
         });
         Ok(StudentSession { code, student_secret: secret })
     }
