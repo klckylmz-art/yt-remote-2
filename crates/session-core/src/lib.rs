@@ -360,6 +360,25 @@ mod tests {
     }
 
     #[test]
+    fn teacher_transport_disconnect_requires_new_student_code_after_approval() {
+        let sessions = SessionStore::new();
+        let student = sessions.create(Duration::from_secs(900)).unwrap();
+        let first = sessions.request(&student.code).unwrap();
+        sessions.decide(&student.code, &student.student_secret, &first.request_id, true).unwrap();
+        assert!(sessions.can_stream(&student.code, &first.teacher_secret));
+        sessions.disconnect_teacher(&student.code, &first.teacher_secret).unwrap();
+        assert!(!sessions.can_stream(&student.code, &first.teacher_secret));
+        assert_eq!(sessions.teacher_status(&student.code, &first.teacher_secret), Err(Error::Unauthorized));
+        assert_eq!(sessions.request(&student.code), Err(Error::InvalidState));
+        assert_eq!(sessions.disconnect_teacher(&student.code, &first.teacher_secret), Err(Error::Unauthorized));
+        let replacement = sessions.create(Duration::from_secs(900)).unwrap();
+        let next = sessions.request(&replacement.code).unwrap();
+        assert!(!sessions.can_stream(&replacement.code, &next.teacher_secret));
+        sessions.decide(&replacement.code, &replacement.student_secret, &next.request_id, true).unwrap();
+        assert!(sessions.can_stream(&replacement.code, &next.teacher_secret));
+    }
+
+    #[test]
     fn invalid_and_expired_codes_fail() {
         let s = SessionStore::new();
         assert_eq!(s.request("127.0.0.1:8080"), Err(Error::InvalidCode));
