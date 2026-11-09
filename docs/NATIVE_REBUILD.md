@@ -43,3 +43,17 @@ CI job logs were not retrievable through the available commit-run lookup (no PR-
 The teacher's WebSocket worker now attempts the authenticated `POST /v1/sessions/{code}/disconnect` when its viewer closes, the socket closes, the connection drops, or the handshake fails. This avoids leaving an approved teacher token valid after a normal window exit. A session-core regression test verifies that an approved teacher disconnect invalidates its token and requires a newly generated student code and a fresh approval.
 
 **Limits:** HTTP disconnect is best-effort and can fail when the network is down; server-side expiry and authorization checks remain mandatory. The current network worker can block during HTTP calls and this change does not yet guarantee that every in-flight input is released on the student's OS. The server must still enforce per-message consent and the student must release held inputs when its own socket closes. No physical device or cross-network validation has been performed for this change.
+
+## macOS packaging verification regression (2026-11-09)
+
+The workflow previously invoked `lipo <binary> -verify_arch <arch>`, which places the option after the file. Correct invocation is `lipo -verify_arch <arch> <binary>`. The CI workflow now also asserts that both ZIP and DMG are nonempty **before** calculating SHA256. These are packaging checks, not physical installation tests.
+
+Verification checklist on both `macos-15` and `macos-15-intel` GitHub-hosted runners:
+
+1. Confirm `rustc -vV` host matches expected ARM64 / x86_64 target.
+2. Confirm `cargo check --locked --workspace --all-targets`, `cargo test --locked --workspace`, and release build pass.
+3. Confirm `lipo -verify_arch` succeeds and both archives exist with nonzero size.
+4. Confirm SHA256 manifests and `UNTESTED` artifacts are uploaded.
+5. Keep clean-machine install, screen permission, live relay and two-device cross-network validation open until evidence exists.
+
+The updated workflow has **not yet been observed passing**; a successful GitHub commit is not CI proof. Do not mark Issue #1 complete based on this change alone.
