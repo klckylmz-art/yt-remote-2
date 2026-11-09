@@ -142,8 +142,7 @@ async fn relay_socket(
         tokio::select! {
             _ = gate.tick() => {
                 if !approved(&app, &code, &token, student) {
-                    let _ = tokio::time::timeout(SEND_TIMEOUT, socket.send(Message::Close(None))).await;
-                    return;
+                    break;
                 }
             }
             incoming = socket.recv() => {
