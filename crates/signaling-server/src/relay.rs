@@ -94,6 +94,17 @@ fn approved(app: &App, code: &str, token: &str, student: bool) -> bool {
         matches!(app.sessions.teacher_status(code, token), Ok(Status::Approved))
     }
 }
+// A dropped WebSocket must not leave a previously approved teacher credential
+// usable for a new connection. Student disconnect terminates the entire code;
+// teacher disconnect revokes its bearer. Both operations are idempotent from
+// the caller's perspective, even if STOP/CANCEL already won the race.
+fn revoke_on_socket_exit(app: &App, code: &str, token: &str, student: bool) {
+    if student {
+        let _ = app.sessions.end(code, token);
+    } else {
+        let _ = app.sessions.disconnect_teacher(code, token);
+    }
+}
 pub(crate) async fn ws_handler(
     ws: WebSocketUpgrade,
     Path((code, role)): Path<(String, String)>,
@@ -176,6 +187,8 @@ async fn relay_socket(
             }
         }
     }
+    // Revoke before attempting a potentially stalled close handshake.
+    revoke_on_socket_exit(&app, &code, &token, student);
     let _ = tokio::time::timeout(SEND_TIMEOUT, socket.send(Message::Close(None))).await;
 }
 #[cfg(test)]
@@ -234,6 +247,31 @@ mod tests {
         let mut receiver = second.frames.subscribe();
         first.frames.send(vec![0xff, 0xd8, 0xff, 0xd9]).unwrap();
         assert_eq!(receiver.try_recv().unwrap(), vec![0xff, 0xd8, 0xff, 0xd9]);
+    }
+    #[test]
+    fn socket_disconnect_revokes_tokens_and_requires_new_student_code() {
+        use super::{revoke_on_socket_exit, App, RelayHub};
+        use std::time::Duration;
+        use yt_session_core::{SessionStore, Status};
+        let sessions = SessionStore::new();
+        let app = App { sessions: sessions.clone(), relay: RelayHub::default() };
+        let student = sessions.create(Duration::from_secs(120)).unwrap();
+        let teacher = sessions.request(&student.code).unwrap();
+        sessions.decide(&student.code, &student.student_secret, &teacher.request_id, true).unwrap();
+        revoke_on_socket_exit(&app, &student.code, &teacher.teacher_secret, false);
+        assert!(!sessions.can_stream(&student.code, &teacher.teacher_secret));
+        assert_eq!(sessions.teacher_status(&student.code, &teacher.teacher_secret),
+                   Err(yt_session_core::Error::Unauthorized));
+        assert_eq!(sessions.student_status(&student.code, &student.student_secret).unwrap().0,
+                   Status::Ended);
+        // Student-side socket loss must also revoke an approved teacher.
+        let next = sessions.create(Duration::from_secs(120)).unwrap();
+        let next_teacher = sessions.request(&next.code).unwrap();
+        sessions.decide(&next.code, &next.student_secret, &next_teacher.request_id, true).unwrap();
+        revoke_on_socket_exit(&app, &next.code, &next.student_secret, true);
+        assert!(!sessions.can_stream(&next.code, &next_teacher.teacher_secret));
+        assert_eq!(sessions.teacher_status(&next.code, &next_teacher.teacher_secret),
+                   Err(yt_session_core::Error::Unauthorized));
     }
     #[test]
     fn relay_refuses_access_until_approval_and_after_revocation() {
