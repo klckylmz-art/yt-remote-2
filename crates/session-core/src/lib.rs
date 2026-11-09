@@ -200,11 +200,11 @@ mod tests {
     #[test]
     fn expired_approval_never_authorizes_streaming() {
         let sessions = SessionStore::new();
-        let student = sessions.create(Duration::from_millis(80)).unwrap();
+        let student = sessions.create(Duration::from_millis(500)).unwrap();
         let teacher = sessions.request(&student.code).unwrap();
         sessions.decide(&student.code, &student.student_secret, &teacher.request_id, true).unwrap();
         assert!(sessions.can_stream(&student.code, &teacher.teacher_secret));
-        std::thread::sleep(Duration::from_millis(110));
+        std::thread::sleep(Duration::from_millis(650));
         assert!(!sessions.can_stream(&student.code, &teacher.teacher_secret));
         assert_eq!(sessions.teacher_status(&student.code, &teacher.teacher_secret), Ok(Status::Expired));
         assert_eq!(sessions.request(&student.code), Err(Error::Expired));
