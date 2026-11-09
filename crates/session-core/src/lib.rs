@@ -33,6 +33,19 @@ fn random_code() -> String {
     let letters: String = buf.iter().map(|b| ALPHABET[(b & 31) as usize] as char).collect();
     format!("{}-{}-{}-{}", &letters[0..4], &letters[4..8], &letters[8..12], &letters[12..16])
 }
+/// Compare bearer secrets without an early exit on a mismatching byte.
+/// Secrets are generated as 64-character lowercase hex strings; malformed
+/// values are rejected before comparison, without indexing user-controlled data.
+fn secret_matches(expected: &str, supplied: &str) -> bool {
+    if expected.len() != 64 || supplied.len() != 64 {
+        return false;
+    }
+    let mut difference = 0_u8;
+    for (&a, &b) in expected.as_bytes().iter().zip(supplied.as_bytes()) {
+        difference |= a ^ b;
+    }
+    difference == 0
+}
 fn normalized(raw: &str) -> Result<String, Error> {
     let code = raw.replace('-', "").to_ascii_uppercase();
     if code.len() != 16 || !code.bytes().all(|c| ALPHABET.contains(&c)) {
@@ -72,7 +85,7 @@ impl SessionStore {
         let code = normalized(raw)?;
         let all = self.inner.lock().expect("mutex poisoned");
         let e = all.get(&code).ok_or(Error::NotFound)?;
-        if e.student_secret != secret { return Err(Error::Unauthorized); }
+        if !secret_matches(&e.student_secret, secret) { return Err(Error::Unauthorized); }
         if Instant::now() >= e.expires_at { return Ok((Status::Expired, None)); }
         Ok((e.status.clone(), e.request_id.clone()))
     }
@@ -80,7 +93,7 @@ impl SessionStore {
         let code = normalized(raw)?;
         let all = self.inner.lock().expect("mutex poisoned");
         let e = all.get(&code).ok_or(Error::NotFound)?;
-        if e.teacher_secret.as_deref() != Some(secret) { return Err(Error::Unauthorized); }
+        if !e.teacher_secret.as_deref().is_some_and(|expected| secret_matches(expected, secret)) { return Err(Error::Unauthorized); }
         if Instant::now() >= e.expires_at { return Ok(Status::Expired); }
         Ok(e.status.clone())
     }
@@ -88,7 +101,7 @@ impl SessionStore {
         let code = normalized(raw)?;
         let mut all = self.inner.lock().expect("mutex poisoned");
         let e = all.get_mut(&code).ok_or(Error::NotFound)?;
-        if e.student_secret != student_secret { return Err(Error::Unauthorized); }
+        if !secret_matches(&e.student_secret, student_secret) { return Err(Error::Unauthorized); }
         if Instant::now() >= e.expires_at { e.status = Status::Expired; return Err(Error::Expired); }
         if e.status != Status::Requested || e.request_id.as_deref() != Some(request_id) { return Err(Error::InvalidRequest); }
         e.status = if allow { Status::Approved } else { Status::Denied };
@@ -100,7 +113,7 @@ impl SessionStore {
         let code = normalized(raw)?;
         let mut all = self.inner.lock().expect("mutex poisoned");
         let e = all.get_mut(&code).ok_or(Error::NotFound)?;
-        if e.teacher_secret.as_deref() != Some(teacher_secret) {
+        if !e.teacher_secret.as_deref().is_some_and(|expected| secret_matches(expected, teacher_secret)) {
             return Err(Error::Unauthorized);
         }
         if Instant::now() >= e.expires_at { e.status = Status::Expired; return Err(Error::Expired); }
@@ -117,7 +130,7 @@ impl SessionStore {
         let code = normalized(raw)?;
         let mut all = self.inner.lock().expect("mutex poisoned");
         let e = all.get_mut(&code).ok_or(Error::NotFound)?;
-        if e.student_secret != student_secret { return Err(Error::Unauthorized); }
+        if !secret_matches(&e.student_secret, student_secret) { return Err(Error::Unauthorized); }
         e.status = Status::Ended;
         Ok(())
     }
@@ -125,6 +138,25 @@ impl SessionStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn bearer_secrets_require_exact_length_and_bytes() {
+        let sessions = SessionStore::new();
+        let student = sessions.create(Duration::from_secs(900)).unwrap();
+        let teacher = sessions.request(&student.code).unwrap();
+        assert!(secret_matches(&student.student_secret, &student.student_secret));
+        assert!(!secret_matches(&student.student_secret, ""));
+        assert!(!secret_matches(&student.student_secret, "a"));
+        assert!(!secret_matches(&student.student_secret, &student.student_secret.to_uppercase()));
+        let mut altered = student.student_secret.clone();
+        altered.replace_range(63..64, if &altered[63..64] == "a" { "b" } else { "a" });
+        assert!(!secret_matches(&student.student_secret, &altered));
+        assert_eq!(sessions.student_status(&student.code, &altered), Err(Error::Unauthorized));
+        assert_eq!(sessions.student_status(&student.code, &student.student_secret).unwrap().0, Status::Requested);
+        assert_eq!(sessions.teacher_status(&student.code, &teacher.teacher_secret.to_uppercase()), Err(Error::Unauthorized));
+        assert_eq!(sessions.cancel_request(&student.code, &teacher.teacher_secret.to_uppercase()), Err(Error::Unauthorized));
+        assert_eq!(sessions.decide(&student.code, &altered, &teacher.request_id, true), Err(Error::Unauthorized));
+        assert!(!sessions.can_stream(&student.code, &teacher.teacher_secret));
+    }
     #[test]
     fn explicit_approval_is_required_and_revocable() {
         let s = SessionStore::new();
