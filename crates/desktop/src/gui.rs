@@ -45,7 +45,7 @@ impl Canvas {
             if let Some(bitmap) = BASIC_FONTS.get(ch) {
                 for (dy, row) in bitmap.iter().enumerate() {
                     for dx in 0..8 {
-                        if (row >> dx) & 1 != 0 {
+                        if (*row >> dx) & 1 != 0 {
                             self.fill(Rect { x: cursor + dx * scale, y: y + dy * scale,
                                 w: scale, h: scale }, color);
                         }
@@ -284,4 +284,15 @@ pub(super) fn launch(server: &str) -> Result<()> {
         running.store(false, Ordering::SeqCst);
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::formatted;
+    #[test]
+    fn single_connection_code_is_grouped_for_copying() {
+        assert_eq!(formatted("ABCDEFGHJKLMNPQR"), "ABCD-EFGH-JKLM-NPQR");
+        assert_eq!(formatted("ABCD-EFGH-JKLM-NPQR"), "ABCD-EFGH-JKLM-NPQR");
+        assert_eq!(formatted("ABCD"), "ABCD");
+    }
 }
