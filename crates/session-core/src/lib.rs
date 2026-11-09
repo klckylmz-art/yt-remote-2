@@ -131,6 +131,10 @@ impl SessionStore {
         let mut all = self.inner.lock().expect("mutex poisoned");
         let e = all.get_mut(&code).ok_or(Error::NotFound)?;
         if !secret_matches(&e.student_secret, student_secret) { return Err(Error::Unauthorized); }
+        // STOP SHARING NOW must revoke both pending and approved teacher credentials.
+        // A stale token must not remain valid for status checks or reconnection.
+        e.teacher_secret = None;
+        e.request_id = None;
         e.status = Status::Ended;
         Ok(())
     }
@@ -241,6 +245,27 @@ mod tests {
         assert!(!sessions.can_stream(&student.code, &teacher.teacher_secret));
         assert_eq!(sessions.teacher_status(&student.code, &teacher.teacher_secret), Ok(Status::Expired));
         assert_eq!(sessions.request(&student.code), Err(Error::Expired));
+    }
+
+    #[test]
+    fn stop_revokes_approved_teacher_credentials_and_pending_request() {
+        let sessions = SessionStore::new();
+        let approved = sessions.create(Duration::from_secs(900)).unwrap();
+        let teacher = sessions.request(&approved.code).unwrap();
+        sessions.decide(&approved.code, &approved.student_secret, &teacher.request_id, true).unwrap();
+        assert!(sessions.can_stream(&approved.code, &teacher.teacher_secret));
+        sessions.end(&approved.code, &approved.student_secret).unwrap();
+        assert!(!sessions.can_stream(&approved.code, &teacher.teacher_secret));
+        assert_eq!(sessions.teacher_status(&approved.code, &teacher.teacher_secret), Err(Error::Unauthorized));
+        assert_eq!(sessions.student_status(&approved.code, &approved.student_secret).unwrap(), (Status::Ended, None));
+        assert_eq!(sessions.request(&approved.code), Err(Error::InvalidState));
+
+        let pending = sessions.create(Duration::from_secs(900)).unwrap();
+        let waiting_teacher = sessions.request(&pending.code).unwrap();
+        sessions.end(&pending.code, &pending.student_secret).unwrap();
+        assert_eq!(sessions.student_status(&pending.code, &pending.student_secret).unwrap(), (Status::Ended, None));
+        assert_eq!(sessions.teacher_status(&pending.code, &waiting_teacher.teacher_secret), Err(Error::Unauthorized));
+        assert_eq!(sessions.decide(&pending.code, &pending.student_secret, &waiting_teacher.request_id, true), Err(Error::InvalidRequest));
     }
 
     #[test]
