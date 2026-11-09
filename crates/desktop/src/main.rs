@@ -5,7 +5,7 @@ use image::{imageops::FilterType, DynamicImage, ImageFormat};
 use minifb::{Key, KeyRepeat, MouseButton, MouseMode, Window, WindowOptions};
 use serde_json::{json, Value};
 use std::{
-    env, error::Error, io::{self, Cursor},
+    env, error::Error, io::{self, Cursor}, collections::HashSet,
     sync::{atomic::{AtomicBool, Ordering}, mpsc, Arc},
     thread, time::{Duration, Instant},
 };
@@ -70,7 +70,7 @@ fn press_key(enigo: &mut Enigo, name: &str, pressed: bool) {
     };
     let _ = enigo.key(key, direction);
 }
-fn apply_input(enigo: &mut Enigo, command: Value) {
+fn apply_input(enigo: &mut Enigo, command: Value, held_keys: &mut HashSet<String>) {
     let kind = command["kind"].as_str().unwrap_or("");
     match kind {
         "move" | "button" => {
@@ -98,7 +98,10 @@ fn apply_input(enigo: &mut Enigo, command: Value) {
         }
         "key" => {
             if let Some(name) = command["name"].as_str() {
-                press_key(enigo, name, command["pressed"] == true);
+                let pressed = command["pressed"] == true;
+                press_key(enigo, name, pressed);
+                if pressed { held_keys.insert(name.to_owned()); }
+                else { held_keys.remove(name); }
             }
         }
         _ => {}
@@ -159,6 +162,7 @@ fn stream_student(server: &str, code: &str, token: &str, running: &Arc<AtomicBoo
     let mut socket = connect_socket(&websocket_url(server, &code, "student")?, &token)?;
     let monitor = Monitor::all()?.into_iter().next().ok_or("No monitor found")?;
     let mut enigo = Enigo::new(&Settings::default())?;
+    let mut held_keys = HashSet::new();
     let mut last = Instant::now() - Duration::from_secs(1);
     let sharing_result: Result<()> = (|| {
     while running.load(Ordering::SeqCst) {
@@ -174,7 +178,7 @@ fn stream_student(server: &str, code: &str, token: &str, running: &Arc<AtomicBoo
         match socket.read() {
             Ok(Message::Text(msg)) => {
                 if let Ok(command) = serde_json::from_str::<Value>(&msg) {
-                    apply_input(&mut enigo, command);
+                    apply_input(&mut enigo, command, &mut held_keys);
                 }
             }
             Ok(Message::Close(_)) => break,
@@ -186,6 +190,11 @@ fn stream_student(server: &str, code: &str, token: &str, running: &Arc<AtomicBoo
     Ok(())
     })();
     running.store(false, Ordering::SeqCst);
+    // Release held modifiers/buttons on any exit, including network failure.
+    for key in held_keys.drain() { press_key(&mut enigo, &key, false); }
+    for button in [Button::Left, Button::Right, Button::Middle] {
+        let _ = enigo.button(button, Direction::Release);
+    }
     let _ = socket.close(None);
     // Always revoke the approved session, including on capture/transport error.
     let _ = token_post(&api(server, &format!("/v1/sessions/{code}/end")), &token, json!({}));
