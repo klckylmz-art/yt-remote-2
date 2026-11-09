@@ -351,6 +351,18 @@ fn main() {
 mod security_tests {
     use super::validate_server;
     #[test]
+    fn bounded_input_queue_drops_commands_instead_of_blocking_the_viewer() {
+        use std::sync::mpsc::{self, TrySendError};
+        let (tx, rx) = mpsc::sync_channel::<String>(2);
+        assert!(tx.try_send("first".into()).is_ok());
+        assert!(tx.try_send("second".into()).is_ok());
+        assert!(matches!(tx.try_send("stale".into()), Err(TrySendError::Full(_))));
+        assert_eq!(rx.try_recv().unwrap(), "first");
+        assert!(tx.try_send("fresh".into()).is_ok());
+        assert_eq!(rx.try_recv().unwrap(), "second");
+        assert_eq!(rx.try_recv().unwrap(), "fresh");
+    }
+    #[test]
     fn rejects_cleartext_remote_signaling() {
         assert!(validate_server("http://127.0.0.1:8080").is_ok());
         assert!(validate_server("http://localhost:8080").is_ok());
