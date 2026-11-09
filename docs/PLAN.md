@@ -33,3 +33,8 @@
 - [ ] Publish only verified releases with checksums and test results.
 
 No microphone, audio, camera, file transfer or clipboard sync. IP addresses, ports and invitation links must never be requested from users.
+
+## Relay socket-exit revocation (2026-11-09; unverified CI)
+- On a student WebSocket exit, the relay now ends the student code and invalidates any teacher token. On a teacher WebSocket exit, it invalidates that teacher token and ends the approved session. A consent gate failure also follows the same cleanup path.
+- Added a Rust unit regression for both roles' socket-exit revocation; the test exercises the revocation helper and session store, **not** an actual network socket or operating-system key release. Rust CI and physical-device results for this change are not yet verified.
+- Remaining security gap: socket close is not instantaneous proof of a lost peer. Until heartbeat/lease enforcement, in-flight frame/input race tests, and native held-key release on disconnect are verified, STOP/network-drop safety is not release-ready.
