@@ -52,3 +52,8 @@ No microphone, audio, camera, file transfer or clipboard sync. IP addresses, por
 - The session store now caps every requested lifetime to 900 seconds, including direct library callers. Previously `Duration::MAX` could overflow `Instant` arithmetic or produce an unexpectedly long authorization window.
 - Added `oversized_session_ttl_is_capped_without_panicking` regression: it creates a session with `Duration::MAX`, checks that approval is still mandatory, and checks STOP revocation. This does not wait 15 minutes to verify the upper bound; expiry integration tests and live socket checks remain open.
 - Evidence: source commit and test are recorded on the native rebuild branch. No new CI result, cross-network test, or physical-device test is claimed by this entry.
+
+## Session TTL compile blocker correction (2026-11-10; CI pending)
+- Source inspection found literal `\\n` escape sequences inside the `Entry` struct initializer after `status: Status::Waiting,`. These are not Rust line breaks and can cause parsing/compilation failure on the native rebuild branch.
+- Replaced the literal escape sequences with actual source newlines, preserving the 900-second TTL cap and the existing `oversized_session_ttl_is_capped_without_panicking` regression test.
+- Evidence is the committed source diff; the older Actions run `42607323960` predates this change and **cannot** verify it. Required next check: `cargo check --locked -p yt-session-core --all-targets` and `cargo test --locked -p yt-session-core` in a new CI run, then Windows/macOS matrix and artifact verification. No physical device or public relay result is claimed.
