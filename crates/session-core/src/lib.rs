@@ -64,7 +64,7 @@ impl SessionStore {
         let secret = random_hex(32);
         all.insert(code.clone(), Entry {
             student_secret: secret.clone(), teacher_secret: None, request_id: None,
-            status: Status::Waiting, expires_at: Instant::now() + ttl,
+            status: Status::Waiting, // Never allow a caller to create an effectively unbounded session.\n            // The HTTP API currently issues 15-minute codes; enforce that\n            // limit at the store boundary as well.\n            expires_at: Instant::now() + ttl.min(Duration::from_secs(900)),
         });
         Ok(StudentSession { code, student_secret: secret })
     }
@@ -413,6 +413,20 @@ mod tests {
         assert_eq!(sessions.student_status(&student.code, &student.student_secret).unwrap(),
                    (Status::Ended, None));
         assert_eq!(sessions.request(&student.code), Err(Error::InvalidState));
+    }
+
+    #[test]
+    fn oversized_session_ttl_is_capped_without_panicking() {
+        let sessions = SessionStore::new();
+        // Duration::MAX must not overflow Instant arithmetic or create
+        // an effectively permanent bearer credential.
+        let student = sessions.create(Duration::MAX).unwrap();
+        let teacher = sessions.request(&student.code).unwrap();
+        assert!(!sessions.can_stream(&student.code, &teacher.teacher_secret));
+        sessions.decide(&student.code, &student.student_secret, &teacher.request_id, true).unwrap();
+        assert!(sessions.can_stream(&student.code, &teacher.teacher_secret));
+        sessions.end(&student.code, &student.student_secret).unwrap();
+        assert!(!sessions.can_stream(&student.code, &teacher.teacher_secret));
     }
 
     #[test]
