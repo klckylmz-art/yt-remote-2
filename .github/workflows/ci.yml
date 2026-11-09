@@ -22,12 +22,12 @@ jobs:
         run: rustc -vV
       - name: Verify Rust formatting
         run: cargo fmt --all -- --check
-      - name: Check security gate and relay (locked dependencies)
-        run: cargo check --locked -p yt-session-core -p yt-signaling-server --all-targets
+      - name: Check security gate and relay
+        run: cargo check -p yt-session-core -p yt-signaling-server --all-targets
       - name: Lint security gate and relay
-        run: cargo clippy --locked -p yt-session-core -p yt-signaling-server --all-targets -- -D warnings
+        run: cargo clippy -p yt-session-core -p yt-signaling-server --all-targets -- -D warnings
       - name: Test consent and command validation
-        run: cargo test --locked -p yt-session-core -p yt-signaling-server
+        run: cargo test -p yt-session-core -p yt-signaling-server
 
   desktop-build:
     needs: session-and-relay
@@ -59,11 +59,11 @@ jobs:
           actual="$(rustc -vV | sed -n 's/^host: //p')"
           test "$actual" = "$expected" || { echo "Expected $expected, got $actual" >&2; exit 1; }
       - name: Compile full workspace
-        run: cargo check --locked --workspace --all-targets
+        run: cargo check --workspace --all-targets
       - name: Run all unit tests
-        run: cargo test --locked --workspace
+        run: cargo test --workspace
       - name: Build native desktop prototype
-        run: cargo build --locked --release -p yt-remote-desktop
+        run: cargo build --release -p yt-remote-desktop
       - name: Generate Windows SHA256 manifest
         if: runner.os == 'Windows'
         shell: pwsh
