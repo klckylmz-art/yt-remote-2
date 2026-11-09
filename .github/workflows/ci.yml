@@ -21,9 +21,9 @@ jobs:
       - name: Show toolchain and target
         run: rustc -vV
       - name: Check security gate and relay
-        run: cargo check -p yt-session-core -p yt-signaling-server --all-targets
+        run: cargo --locked check -p yt-session-core -p yt-signaling-server --all-targets
       - name: Test consent and command validation
-        run: cargo test -p yt-session-core -p yt-signaling-server
+        run: cargo --locked test -p yt-session-core -p yt-signaling-server
 
   desktop-build:
     needs: session-and-relay
@@ -55,11 +55,11 @@ jobs:
           actual="$(rustc -vV | sed -n 's/^host: //p')"
           test "$actual" = "$expected" || { echo "Expected $expected, got $actual" >&2; exit 1; }
       - name: Compile full workspace
-        run: cargo check --workspace --all-targets
+        run: cargo --locked check --workspace --all-targets
       - name: Run all unit tests
-        run: cargo test --workspace
+        run: cargo --locked test --workspace
       - name: Build native desktop prototype
-        run: cargo build --release -p yt-remote-desktop
+        run: cargo --locked build --release -p yt-remote-desktop
       - name: Generate Windows SHA256 manifest
         if: runner.os == 'Windows'
         shell: pwsh
