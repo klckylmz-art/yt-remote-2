@@ -229,7 +229,9 @@ fn draw_disconnect(pixels: &mut [u32]) {
 }
 fn teacher_viewer(server: &str, code: &str, token: String) -> Result<()> {
     let (to_ui, from_network) = mpsc::sync_channel::<Vec<u32>>(2);
-    let (to_network, from_ui) = mpsc::channel::<String>();
+    // Bound queued input during slow/disconnected networks. A remote controller
+    // must never accumulate an unbounded backlog of stale mouse/key events.
+    let (to_network, from_ui) = mpsc::sync_channel::<String>(128);
     let address = websocket_url(server, &code, "teacher")?;
     let active = Arc::new(AtomicBool::new(true));
     let network_active = Arc::clone(&active);
@@ -294,14 +296,14 @@ fn teacher_viewer(server: &str, code: &str, token: String) -> Result<()> {
             let x = (f64::from(x) / viewer_width as f64).clamp(0.0,1.0);
             let y = (f64::from(y) / viewer_height as f64).clamp(0.0,1.0);
             if previous_mouse != Some((x.to_bits(), y.to_bits())) {
-                let _ = to_network.send(json!({"kind":"move","x":x,"y":y}).to_string());
+                let _ = to_network.try_send(json!({"kind":"move","x":x,"y":y}).to_string());
                 previous_mouse = Some((x.to_bits(), y.to_bits()));
             }
             for (button,name,old) in [(MouseButton::Left,"left",&mut old_left),
                                       (MouseButton::Right,"right",&mut old_right)] {
                 let down = window.get_mouse_down(button);
                 if down != *old {
-                    let _ = to_network.send(json!({"kind":"button","x":x,"y":y,
+                    let _ = to_network.try_send(json!({"kind":"button","x":x,"y":y,
                         "button":name,"pressed":down}).to_string());
                     *old = down;
                 }
@@ -310,11 +312,11 @@ fn teacher_viewer(server: &str, code: &str, token: String) -> Result<()> {
         for key in window.get_keys_pressed(KeyRepeat::No) {
             if key == Key::Escape { continue; }
             let name = format!("{key:?}").to_ascii_lowercase();
-            let _ = to_network.send(json!({"kind":"key","name":name,"pressed":true}).to_string());
+            let _ = to_network.try_send(json!({"kind":"key","name":name,"pressed":true}).to_string());
         }
         for key in window.get_keys_released() {
             let name = format!("{key:?}").to_ascii_lowercase();
-            let _ = to_network.send(json!({"kind":"key","name":name,"pressed":false}).to_string());
+            let _ = to_network.try_send(json!({"kind":"key","name":name,"pressed":false}).to_string());
         }
         // The local overlay must never modify the remote frame.
         display_pixels.copy_from_slice(&pixels);
