@@ -57,3 +57,13 @@ Verification checklist on both `macos-15` and `macos-15-intel` GitHub-hosted run
 5. Keep clean-machine install, screen permission, live relay and two-device cross-network validation open until evidence exists.
 
 The updated workflow has **not yet been observed passing**; a successful GitHub commit is not CI proof. Do not mark Issue #1 complete based on this change alone.
+
+## macOS architecture verification: corrected from real CI logs (2026-11-09)
+
+The failing Apple Silicon job `129126836247` in run `42607323960` explicitly printed `usage: lipo <input_file> <command> [<options> ...]` and rejected `lipo -verify_arch "$arch" dist/YTRemote.app/Contents/MacOS/YTRemote` with `unknown architecture specification flag: dist/YTRemote.app/Contents/MacOS/YTRemote`. The correct order for this runner is:
+
+```sh
+lipo dist/YTRemote.app/Contents/MacOS/YTRemote -verify_arch "$arch"
+```
+
+The earlier section incorrectly claimed the opposite order was correct; **that claim is superseded by the actual runner log**. The workflow is corrected in commit `20e7aa5`. This is a source-level fix pending a new CI run; do not mark either macOS build verified until its new packaging and artifact-upload jobs pass. The 2026-11-09 run demonstrated successful Ubuntu and Windows jobs and failed macOS verification; it did not test real installations or cross-network control.
