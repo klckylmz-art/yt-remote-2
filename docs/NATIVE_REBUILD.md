@@ -73,3 +73,10 @@ The earlier section incorrectly claimed the opposite order was correct; **that c
 Previously the relay awaited WebSocket sends without a timeout. A peer that stops reading could suspend a relay task inside a send and delay periodic consent checks. Frame, input and close writes now have a two-second timeout; a timed-out frame/input send ends that relay task. A Tokio regression test checks timeout behavior against a permanently pending future. This is not a live network test and does not prove zero in-flight bytes after STOP. Real backpressure, held-key release and revocation tests remain necessary. No successful CI result for this change has yet been observed.
 
 The earlier macOS CI run 42607323960 compiled Windows x64, macOS arm64 and macOS Intel, but both macOS jobs failed the lipo validation step. Its log specified `usage: lipo <input_file> <command>`; the branch now places the input path first. A newer green run is needed to confirm the fix and artifact upload.
+
+
+## HTTP bearer-token transport hardening — 2026-11-09
+
+The native desktop HTTP client now disables redirects for every create, status, allow/deny, cancel, stop, and disconnect request. This prevents a signaling endpoint returning an HTTP 3xx response from forwarding bearer credentials to a redirected host. Connect, read and write timeouts are set to five seconds. A loopback TCP regression test returns a 302 to an unrelated host and asserts the client rejects it. This is a source-level change, **not** a claim that Windows/macOS CI or physical-device tests have passed. WebSocket TLS verification and relay-side controls require separate review; a five-second synchronous request can still briefly block any UI path that calls it directly.
+
+Verification required: run `cargo test --locked -p yt-remote-desktop` on each supported OS, review CI logs, and confirm status/permission UI responsiveness under a stalled relay. No public relay or cross-network test is evidenced here.
