@@ -23,3 +23,9 @@ This document and the accompanying test do not certify any OS build, RustDesk in
 ## Current security regression coverage (source changes; CI pending)
 
 The session store now clears the teacher bearer token and pending request identifier on both student STOP and student DENY. The denial regression asserts the old teacher credential returns `Unauthorized` and the student's pending request ID is absent. This does not by itself prove that a previously established WebSocket stops immediately: a live relay test is still required, including held-key release and in-flight frame cancellation.
+
+## Teacher disconnect API (source change; unverified)
+
+`POST /v1/sessions/{code}/disconnect` requires the current teacher bearer credential. For a pending request it clears the request and returns the student to Waiting; for an approved request it revokes the teacher token and ends the student session. Reusing the old token must return Unauthorized. The new unit test covers pending and approved disconnects, invalid bearer credentials, replay rejection and fresh approval after a canceled pending request. This is **not** yet wired to every native viewer exit path, and does not guarantee in-flight WebSocket frames or held input are flushed. These remain mandatory integration/device tests.
+
+CI job logs were not retrievable through the available commit-run lookup (no PR-triggered runs returned); no Windows/macOS build or local Rust test success is asserted. Do not treat missing CI evidence as a passing check or as a compiler failure.
