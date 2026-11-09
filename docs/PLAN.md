@@ -43,3 +43,7 @@ No microphone, audio, camera, file transfer or clipboard sync. IP addresses, por
 - Examined Actions run `42607323960`: Ubuntu session/relay and Windows x64 jobs succeeded; both macOS jobs compiled, tested, built, and packaged successfully, but failed at the `Verify macOS bundle and create SHA256 manifest` step. This is not evidence of a Rust compile failure or a billing-related runner startup failure.
 - Corrected `lipo` invocation to `lipo -verify_arch "$arch" <bundle executable>` so the tool receives the architecture before the binary. The existing CI step now acts as an architecture regression gate for both `arm64` and `x86_64`, followed by nonempty ZIP/DMG checks and SHA256 generation.
 - **Not yet verified:** CI rerun of this change, artifact upload, physical launch/install, screen permissions, or cross-network operation. Do not mark Stage 0 or release gates complete until new run logs confirm them.
+
+## Concurrent STOP versus ALLOW regression (2026-11-09; pending CI)
+- Added `concurrent_student_stop_and_teacher_approval_cannot_resurrect_session` to session-core. A barrier starts ALLOW and STOP on separate threads, accepts either valid ordering, then asserts the teacher bearer is revoked, student status is terminal, and the code cannot accept another request.
+- This proves a session-store invariant only if the new test passes in CI; it does **not** establish zero in-flight network frames, native key/button release, or physical cross-network behavior. Keep those release gates open.
