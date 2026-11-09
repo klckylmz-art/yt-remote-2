@@ -273,6 +273,7 @@ fn main() {
         _ => {
             eprintln!("YT Remote: launch without arguments for the graphical interface.");
             eprintln!("Developer mode: student | teacher STUDENT_CODE");
+            return;
         }
     };
     if let Err(err) = result { eprintln!("YT Remote error: {err}"); std::process::exit(1); }
