@@ -131,6 +131,10 @@ impl SessionStore {
         let mut all = self.inner.lock().expect("mutex poisoned");
         let e = all.get_mut(&code).ok_or(Error::NotFound)?;
         if !secret_matches(&e.student_secret, student_secret) { return Err(Error::Unauthorized); }
+        // Revoke the teacher bearer and pending approval atomically with STOP.
+        // The student credential is retained only to report the ended state.
+        e.teacher_secret = None;
+        e.request_id = None;
         e.status = Status::Ended;
         Ok(())
     }
@@ -228,6 +232,33 @@ mod tests {
         assert!(!sessions.can_stream(&student.code, &winner.teacher_secret));
         sessions.decide(&student.code, &student.student_secret, &next.request_id, true).unwrap();
         assert!(sessions.can_stream(&student.code, &next.teacher_secret));
+    }
+
+    #[test]
+    fn stop_revokes_approved_teacher_token_and_pending_request_id() {
+        let sessions = SessionStore::new();
+        let student = sessions.create(Duration::from_secs(900)).unwrap();
+        let teacher = sessions.request(&student.code).unwrap();
+        sessions.decide(&student.code, &student.student_secret, &teacher.request_id, true).unwrap();
+        assert!(sessions.can_stream(&student.code, &teacher.teacher_secret));
+        sessions.end(&student.code, &student.student_secret).unwrap();
+        assert_eq!(sessions.teacher_status(&student.code, &teacher.teacher_secret), Err(Error::Unauthorized));
+        assert!(!sessions.can_stream(&student.code, &teacher.teacher_secret));
+        assert_eq!(sessions.student_status(&student.code, &student.student_secret).unwrap(), (Status::Ended, None));
+        assert_eq!(sessions.decide(&student.code, &student.student_secret, &teacher.request_id, true), Err(Error::InvalidRequest));
+        assert_eq!(sessions.request(&student.code), Err(Error::InvalidState));
+    }
+
+    #[test]
+    fn stop_revokes_unapproved_teacher_and_blocks_replay() {
+        let sessions = SessionStore::new();
+        let student = sessions.create(Duration::from_secs(900)).unwrap();
+        let teacher = sessions.request(&student.code).unwrap();
+        sessions.end(&student.code, &student.student_secret).unwrap();
+        assert_eq!(sessions.teacher_status(&student.code, &teacher.teacher_secret), Err(Error::Unauthorized));
+        assert_eq!(sessions.student_status(&student.code, &student.student_secret).unwrap(), (Status::Ended, None));
+        assert_eq!(sessions.decide(&student.code, &student.student_secret, &teacher.request_id, true), Err(Error::InvalidRequest));
+        assert!(!sessions.can_stream(&student.code, &teacher.teacher_secret));
     }
 
     #[test]
