@@ -46,6 +46,19 @@ fn secret_matches(expected: &str, supplied: &str) -> bool {
     }
     difference == 0
 }
+/// Request IDs are 128-bit random hex values. Avoid leaking a matching
+/// prefix through an early-exit equality comparison during approval.
+fn request_id_matches(expected: &str, supplied: &str) -> bool {
+    if expected.len() != 32 || supplied.len() != 32 {
+        return false;
+    }
+    let mut difference = 0_u8;
+    for (&a, &b) in expected.as_bytes().iter().zip(supplied.as_bytes()) {
+        difference |= a ^ b;
+    }
+    difference == 0
+}
+
 fn normalized(raw: &str) -> Result<String, Error> {
     let code = raw.replace('-', "").to_ascii_uppercase();
     if code.len() != 16 || !code.bytes().all(|c| ALPHABET.contains(&c)) {
@@ -107,7 +120,7 @@ impl SessionStore {
         let e = all.get_mut(&code).ok_or(Error::NotFound)?;
         if !secret_matches(&e.student_secret, student_secret) { return Err(Error::Unauthorized); }
         if Instant::now() >= e.expires_at { e.status = Status::Expired; return Err(Error::Expired); }
-        if e.status != Status::Requested || e.request_id.as_deref() != Some(request_id) { return Err(Error::InvalidRequest); }
+        if e.status != Status::Requested || !e.request_id.as_deref().is_some_and(|expected| request_id_matches(expected, request_id)) { return Err(Error::InvalidRequest); }
         if allow {
             e.status = Status::Approved;
         } else {
@@ -180,6 +193,25 @@ impl SessionStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn request_ids_require_exact_bytes_and_reject_replays() {
+        let sessions = SessionStore::new();
+        let student = sessions.create(Duration::from_secs(120)).unwrap();
+        let teacher = sessions.request(&student.code).unwrap();
+        assert!(request_id_matches(&teacher.request_id, &teacher.request_id));
+        assert!(!request_id_matches(&teacher.request_id, ""));
+        assert!(!request_id_matches(&teacher.request_id, &teacher.request_id[..31]));
+        let mut altered = teacher.request_id.clone();
+        let replacement = if &altered[31..32] == "a" { "b" } else { "a" };
+        altered.replace_range(31..32, replacement);
+        assert!(!request_id_matches(&teacher.request_id, &altered));
+        assert_eq!(sessions.decide(&student.code, &student.student_secret, &altered, true), Err(Error::InvalidRequest));
+        assert!(!sessions.can_stream(&student.code, &teacher.teacher_secret));
+        sessions.decide(&student.code, &student.student_secret, &teacher.request_id, true).unwrap();
+        assert!(sessions.can_stream(&student.code, &teacher.teacher_secret));
+        sessions.end(&student.code, &student.student_secret).unwrap();
+        assert_eq!(sessions.decide(&student.code, &student.student_secret, &teacher.request_id, true), Err(Error::InvalidRequest));
+    }
     #[test]
     fn bearer_secrets_require_exact_length_and_bytes() {
         let sessions = SessionStore::new();
