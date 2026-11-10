@@ -15,6 +15,8 @@ use crate::{bearer, App};
 const FRAME_LIMIT: usize = 3 * 1024 * 1024;
 const INPUT_LIMIT: usize = 4096;
 const CHANNEL_CAPACITY: usize = 4;
+// A stalled socket must not indefinitely block consent revocation checks.
+const SEND_TIMEOUT: Duration = Duration::from_secs(2);
 
 #[derive(Clone)]
 pub(crate) struct RelayHub {
@@ -92,6 +94,17 @@ fn approved(app: &App, code: &str, token: &str, student: bool) -> bool {
         matches!(app.sessions.teacher_status(code, token), Ok(Status::Approved))
     }
 }
+// A dropped WebSocket must not leave a previously approved teacher credential
+// usable for a new connection. Student disconnect terminates the entire code;
+// teacher disconnect revokes its bearer. Both operations are idempotent from
+// the caller's perspective, even if STOP/CANCEL already won the race.
+fn revoke_on_socket_exit(app: &App, code: &str, token: &str, student: bool) {
+    if student {
+        let _ = app.sessions.end(code, token);
+    } else {
+        let _ = app.sessions.disconnect_teacher(code, token);
+    }
+}
 pub(crate) async fn ws_handler(
     ws: WebSocketUpgrade,
     Path((code, role)): Path<(String, String)>,
@@ -129,8 +142,7 @@ async fn relay_socket(
         tokio::select! {
             _ = gate.tick() => {
                 if !approved(&app, &code, &token, student) {
-                    let _ = socket.send(Message::Close(None)).await;
-                    return;
+                    break;
                 }
             }
             incoming = socket.recv() => {
@@ -153,7 +165,7 @@ async fn relay_socket(
             msg = frames.recv(), if !student => {
                 match msg {
                     Ok(data) if approved(&app, &code, &token, student) => {
-                        if socket.send(Message::Binary(data)).await.is_err() { break; }
+                        if !matches!(tokio::time::timeout(SEND_TIMEOUT, socket.send(Message::Binary(data))).await, Ok(Ok(()))) { break; }
                     }
                     Err(broadcast::error::RecvError::Closed) => break,
                     _ => {}
@@ -162,19 +174,48 @@ async fn relay_socket(
             msg = inputs.recv(), if student => {
                 match msg {
                     Ok(cmd) if approved(&app, &code, &token, student) => {
-                        if socket.send(Message::Text(cmd)).await.is_err() { break; }
+                        if !matches!(tokio::time::timeout(SEND_TIMEOUT, socket.send(Message::Text(cmd))).await, Ok(Ok(()))) { break; }
                     }
+                    // Dropping even one key/button transition can leave a
+                    // modifier or mouse button logically held. Fail closed
+                    // rather than replaying a partial input sequence.
+                    Err(broadcast::error::RecvError::Lagged(_)) => break,
                     Err(broadcast::error::RecvError::Closed) => break,
                     _ => {}
                 }
             }
         }
     }
-    let _ = socket.send(Message::Close(None)).await;
+    // Revoke before attempting a potentially stalled close handshake.
+    revoke_on_socket_exit(&app, &code, &token, student);
+    let _ = tokio::time::timeout(SEND_TIMEOUT, socket.send(Message::Close(None))).await;
 }
 #[cfg(test)]
 mod tests {
     use super::valid_input;
+    #[tokio::test]
+    async fn stalled_transport_send_is_bounded() {
+        // A peer that stops reading must not pin the relay loop forever.
+        let result = tokio::time::timeout(
+            super::SEND_TIMEOUT,
+            std::future::pending::<Result<(), ()>>(),
+        ).await;
+        assert!(result.is_err());
+    }
+    #[tokio::test]
+    async fn input_channel_detects_lost_transitions() {
+        // With a tiny bounded queue, losing a key-up event must be
+        // distinguishable from an intact sequence. The student socket loop
+        // disconnects on RecvError::Lagged rather than applying later input.
+        let (sender, mut receiver) = tokio::sync::broadcast::channel::<String>(2);
+        sender.send("key-down".into()).unwrap();
+        sender.send("key-up".into()).unwrap();
+        sender.send("next-command".into()).unwrap();
+        assert!(matches!(
+            receiver.recv().await,
+            Err(tokio::sync::broadcast::error::RecvError::Lagged(1))
+        ));
+    }
     #[test]
     fn rejects_file_transfer_and_unsafe_commands() {
         assert!(valid_input(r#"{"kind":"move","x":0.3,"y":0.9}"#));
@@ -205,6 +246,31 @@ mod tests {
         let mut receiver = second.frames.subscribe();
         first.frames.send(vec![0xff, 0xd8, 0xff, 0xd9]).unwrap();
         assert_eq!(receiver.try_recv().unwrap(), vec![0xff, 0xd8, 0xff, 0xd9]);
+    }
+    #[test]
+    fn socket_disconnect_revokes_tokens_and_requires_new_student_code() {
+        use super::{revoke_on_socket_exit, App, RelayHub};
+        use std::time::Duration;
+        use yt_session_core::{SessionStore, Status};
+        let sessions = SessionStore::new();
+        let app = App { sessions: sessions.clone(), relay: RelayHub::default() };
+        let student = sessions.create(Duration::from_secs(120)).unwrap();
+        let teacher = sessions.request(&student.code).unwrap();
+        sessions.decide(&student.code, &student.student_secret, &teacher.request_id, true).unwrap();
+        revoke_on_socket_exit(&app, &student.code, &teacher.teacher_secret, false);
+        assert!(!sessions.can_stream(&student.code, &teacher.teacher_secret));
+        assert_eq!(sessions.teacher_status(&student.code, &teacher.teacher_secret),
+                   Err(yt_session_core::Error::Unauthorized));
+        assert_eq!(sessions.student_status(&student.code, &student.student_secret).unwrap().0,
+                   Status::Ended);
+        // Student-side socket loss must also revoke an approved teacher.
+        let next = sessions.create(Duration::from_secs(120)).unwrap();
+        let next_teacher = sessions.request(&next.code).unwrap();
+        sessions.decide(&next.code, &next.student_secret, &next_teacher.request_id, true).unwrap();
+        revoke_on_socket_exit(&app, &next.code, &next.student_secret, true);
+        assert!(!sessions.can_stream(&next.code, &next_teacher.teacher_secret));
+        assert_eq!(sessions.teacher_status(&next.code, &next_teacher.teacher_secret),
+                   Err(yt_session_core::Error::Unauthorized));
     }
     #[test]
     fn relay_refuses_access_until_approval_and_after_revocation() {

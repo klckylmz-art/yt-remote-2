@@ -33,12 +33,22 @@ fn validate_server(base: &str) -> Result<()> {
 fn api(base: &str, route: &str) -> String {
     format!("{}{}", base.trim_end_matches('/'), route)
 }
+// Authentication headers must never follow a redirect to another origin.
+// Bound every HTTP operation so a failed relay cannot freeze a worker forever.
+fn http_agent() -> ureq::Agent {
+    ureq::AgentBuilder::new()
+        .redirects(0)
+        .timeout_connect(Duration::from_secs(5))
+        .timeout_read(Duration::from_secs(5))
+        .timeout_write(Duration::from_secs(5))
+        .build()
+}
 fn token_get(url: &str, token: &str) -> Result<Value> {
-    Ok(ureq::get(url).set("Authorization", &format!("Bearer {token}"))
+    Ok(http_agent().get(url).set("Authorization", &format!("Bearer {token}"))
         .call()?.into_json()?)
 }
 fn token_post(url: &str, token: &str, data: Value) -> Result<()> {
-    ureq::post(url)
+    http_agent().post(url)
         .set("Authorization", &format!("Bearer {token}"))
         .send_json(data)?;
     Ok(())
@@ -124,7 +134,7 @@ fn apply_input(enigo: &mut Enigo, command: Value, held_keys: &mut HashSet<String
     }
 }
 fn student(server: &str) -> Result<()> {
-    let session: Value = ureq::post(&api(server, "/v1/sessions")).call()?.into_json()?;
+    let session: Value = http_agent().post(&api(server, "/v1/sessions")).call()?.into_json()?;
     let code = session["code"].as_str().ok_or("missing code")?.to_owned();
     let token = session["student_token"].as_str().ok_or("missing student token")?.to_owned();
     println!("\nYOUR CONNECTION CODE: {code}");
@@ -158,7 +168,7 @@ fn student(server: &str) -> Result<()> {
 }
 fn teacher(server: &str, code: &str) -> Result<()> {
     let code = code.trim().to_ascii_uppercase();
-    let session: Value = ureq::post(&api(server, &format!("/v1/sessions/{code}/request")))
+    let session: Value = http_agent().post(&api(server, &format!("/v1/sessions/{code}/request")))
         .call()?.into_json()?;
     let token = session["teacher_token"].as_str().ok_or("missing token")?.to_owned();
     println!("Waiting for student permission...");
@@ -235,8 +245,13 @@ fn teacher_viewer(server: &str, code: &str, token: String) -> Result<()> {
     let address = websocket_url(server, &code, "teacher")?;
     let active = Arc::new(AtomicBool::new(true));
     let network_active = Arc::clone(&active);
+    let disconnect_url = api(server, &format!("/v1/sessions/{code}/disconnect"));
     thread::spawn(move || {
-        let Ok(mut socket) = connect_socket(&address, &token) else { network_active.store(false, Ordering::SeqCst); return; };
+        // Revoke on ALL exit paths, including failed WS handshake, network drop,
+        // user closing the borderless viewer and Escape. Never leave an approved
+        // teacher token usable merely because the window has disappeared.
+        let connected = connect_socket(&address, &token);
+        if let Ok(mut socket) = connected {
         while network_active.load(Ordering::SeqCst) {
             while let Ok(cmd) = from_ui.try_recv() {
                 if socket.send(Message::Text(cmd)).is_err() { network_active.store(false, Ordering::SeqCst); break; }
@@ -258,6 +273,12 @@ fn teacher_viewer(server: &str, code: &str, token: String) -> Result<()> {
             }
         }
         let _ = socket.close(None);
+        }
+        network_active.store(false, Ordering::SeqCst);
+        // Server-side revocation is best-effort during network loss; the server
+        // must additionally expire credentials and enforce authorization per
+        // message. Never retry with the same token after disconnect.
+        let _ = token_post(&disconnect_url, &token, json!({}));
     });
     // Borderless viewer sized to the teacher's primary monitor.
     // Native fullscreen/minimize support still requires final device testing.
@@ -350,6 +371,7 @@ fn main() {
 #[cfg(test)]
 mod security_tests {
     use super::validate_server;
+    use std::time::Duration;
     #[test]
     fn bounded_input_queue_drops_commands_instead_of_blocking_the_viewer() {
         use std::sync::mpsc::{self, TrySendError};
@@ -361,6 +383,25 @@ mod security_tests {
         assert!(tx.try_send("fresh".into()).is_ok());
         assert_eq!(rx.try_recv().unwrap(), "second");
         assert_eq!(rx.try_recv().unwrap(), "fresh");
+    }
+    #[test]
+    fn http_client_refuses_redirects_before_sending_credentials_elsewhere() {
+        use std::{io::{Read, Write}, net::TcpListener, thread};
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/redirect", listener.local_addr().unwrap());
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+            let mut request = [0_u8; 4096];
+            let n = stream.read(&mut request).unwrap();
+            let raw = String::from_utf8_lossy(&request[..n]);
+            assert!(raw.starts_with("GET /redirect HTTP/1.1"));
+            stream.write_all(b"HTTP/1.1 302 Found\r\nLocation: https://example.invalid/steal\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").unwrap();
+        });
+        let result = super::http_agent().get(&url)
+            .set("Authorization", "Bearer test-secret").call();
+        assert!(matches!(result, Err(ureq::Error::Status(302, _))));
+        server.join().unwrap();
     }
     #[test]
     fn rejects_cleartext_remote_signaling() {

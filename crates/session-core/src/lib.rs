@@ -46,6 +46,19 @@ fn secret_matches(expected: &str, supplied: &str) -> bool {
     }
     difference == 0
 }
+/// Request IDs are 128-bit random hex values. Avoid leaking a matching
+/// prefix through an early-exit equality comparison during approval.
+fn request_id_matches(expected: &str, supplied: &str) -> bool {
+    if expected.len() != 32 || supplied.len() != 32 {
+        return false;
+    }
+    let mut difference = 0_u8;
+    for (&a, &b) in expected.as_bytes().iter().zip(supplied.as_bytes()) {
+        difference |= a ^ b;
+    }
+    difference == 0
+}
+
 fn normalized(raw: &str) -> Result<String, Error> {
     let code = raw.replace('-', "").to_ascii_uppercase();
     if code.len() != 16 || !code.bytes().all(|c| ALPHABET.contains(&c)) {
@@ -64,7 +77,11 @@ impl SessionStore {
         let secret = random_hex(32);
         all.insert(code.clone(), Entry {
             student_secret: secret.clone(), teacher_secret: None, request_id: None,
-            status: Status::Waiting, expires_at: Instant::now() + ttl,
+            status: Status::Waiting,
+            // Never allow a caller to create an effectively unbounded session.
+            // The HTTP API currently issues 15-minute codes; enforce that
+            // limit at the store boundary as well.
+            expires_at: Instant::now() + ttl.min(Duration::from_secs(900)),
         });
         Ok(StudentSession { code, student_secret: secret })
     }
@@ -103,8 +120,16 @@ impl SessionStore {
         let e = all.get_mut(&code).ok_or(Error::NotFound)?;
         if !secret_matches(&e.student_secret, student_secret) { return Err(Error::Unauthorized); }
         if Instant::now() >= e.expires_at { e.status = Status::Expired; return Err(Error::Expired); }
-        if e.status != Status::Requested || e.request_id.as_deref() != Some(request_id) { return Err(Error::InvalidRequest); }
-        e.status = if allow { Status::Approved } else { Status::Denied };
+        if e.status != Status::Requested || !e.request_id.as_deref().is_some_and(|expected| request_id_matches(expected, request_id)) { return Err(Error::InvalidRequest); }
+        if allow {
+            e.status = Status::Approved;
+        } else {
+            // A denied request must not retain a usable teacher credential or
+            // request identifier. Any retry requires a new student code.
+            e.teacher_secret = None;
+            e.request_id = None;
+            e.status = Status::Denied;
+        }
         Ok(())
     }
     /// Cancel a pending teacher request without invalidating the student's code.
@@ -123,6 +148,32 @@ impl SessionStore {
         e.status = Status::Waiting;
         Ok(())
     }
+    /// Teacher-initiated disconnect revokes the current credential immediately.
+    /// Pending requests return to Waiting; an approved session is terminal and
+    /// requires a new student-generated code and explicit approval.
+    pub fn disconnect_teacher(&self, raw: &str, teacher_secret: &str) -> Result<(), Error> {
+        let code = normalized(raw)?;
+        let mut all = self.inner.lock().expect("mutex poisoned");
+        let e = all.get_mut(&code).ok_or(Error::NotFound)?;
+        if !e.teacher_secret.as_deref().is_some_and(|expected| secret_matches(expected, teacher_secret)) {
+            return Err(Error::Unauthorized);
+        }
+        if Instant::now() >= e.expires_at {
+            e.teacher_secret = None;
+            e.request_id = None;
+            e.status = Status::Expired;
+            return Err(Error::Expired);
+        }
+        let next = match e.status {
+            Status::Requested => Status::Waiting,
+            Status::Approved => Status::Ended,
+            _ => return Err(Error::InvalidState),
+        };
+        e.teacher_secret = None;
+        e.request_id = None;
+        e.status = next;
+        Ok(())
+    }
     pub fn can_stream(&self, raw: &str, teacher_secret: &str) -> bool {
         self.teacher_status(raw, teacher_secret) == Ok(Status::Approved)
     }
@@ -131,6 +182,10 @@ impl SessionStore {
         let mut all = self.inner.lock().expect("mutex poisoned");
         let e = all.get_mut(&code).ok_or(Error::NotFound)?;
         if !secret_matches(&e.student_secret, student_secret) { return Err(Error::Unauthorized); }
+        // STOP SHARING NOW must revoke both pending and approved teacher credentials.
+        // A stale token must not remain valid for status checks or reconnection.
+        e.teacher_secret = None;
+        e.request_id = None;
         e.status = Status::Ended;
         Ok(())
     }
@@ -138,6 +193,25 @@ impl SessionStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn request_ids_require_exact_bytes_and_reject_replays() {
+        let sessions = SessionStore::new();
+        let student = sessions.create(Duration::from_secs(120)).unwrap();
+        let teacher = sessions.request(&student.code).unwrap();
+        assert!(request_id_matches(&teacher.request_id, &teacher.request_id));
+        assert!(!request_id_matches(&teacher.request_id, ""));
+        assert!(!request_id_matches(&teacher.request_id, &teacher.request_id[..31]));
+        let mut altered = teacher.request_id.clone();
+        let replacement = if &altered[31..32] == "a" { "b" } else { "a" };
+        altered.replace_range(31..32, replacement);
+        assert!(!request_id_matches(&teacher.request_id, &altered));
+        assert_eq!(sessions.decide(&student.code, &student.student_secret, &altered, true), Err(Error::InvalidRequest));
+        assert!(!sessions.can_stream(&student.code, &teacher.teacher_secret));
+        sessions.decide(&student.code, &student.student_secret, &teacher.request_id, true).unwrap();
+        assert!(sessions.can_stream(&student.code, &teacher.teacher_secret));
+        sessions.end(&student.code, &student.student_secret).unwrap();
+        assert_eq!(sessions.decide(&student.code, &student.student_secret, &teacher.request_id, true), Err(Error::InvalidRequest));
+    }
     #[test]
     fn bearer_secrets_require_exact_length_and_bytes() {
         let sessions = SessionStore::new();
@@ -178,6 +252,8 @@ mod tests {
         let teacher = s.request(&st.code).unwrap();
         s.decide(&st.code, &st.student_secret, &teacher.request_id, false).unwrap();
         assert!(!s.can_stream(&st.code, &teacher.teacher_secret));
+        assert_eq!(s.teacher_status(&st.code, &teacher.teacher_secret), Err(Error::Unauthorized));
+        assert_eq!(s.student_status(&st.code, &st.student_secret).unwrap(), (Status::Denied, None));
         assert_eq!(s.decide(&st.code, &st.student_secret, &teacher.request_id, true), Err(Error::InvalidRequest));
     }
     #[test]
@@ -241,6 +317,152 @@ mod tests {
         assert!(!sessions.can_stream(&student.code, &teacher.teacher_secret));
         assert_eq!(sessions.teacher_status(&student.code, &teacher.teacher_secret), Ok(Status::Expired));
         assert_eq!(sessions.request(&student.code), Err(Error::Expired));
+    }
+
+    #[test]
+    fn stop_revokes_approved_teacher_credentials_and_pending_request() {
+        let sessions = SessionStore::new();
+        let approved = sessions.create(Duration::from_secs(900)).unwrap();
+        let teacher = sessions.request(&approved.code).unwrap();
+        sessions.decide(&approved.code, &approved.student_secret, &teacher.request_id, true).unwrap();
+        assert!(sessions.can_stream(&approved.code, &teacher.teacher_secret));
+        sessions.end(&approved.code, &approved.student_secret).unwrap();
+        assert!(!sessions.can_stream(&approved.code, &teacher.teacher_secret));
+        assert_eq!(sessions.teacher_status(&approved.code, &teacher.teacher_secret), Err(Error::Unauthorized));
+        assert_eq!(sessions.student_status(&approved.code, &approved.student_secret).unwrap(), (Status::Ended, None));
+        assert_eq!(sessions.request(&approved.code), Err(Error::InvalidState));
+
+        let pending = sessions.create(Duration::from_secs(900)).unwrap();
+        let waiting_teacher = sessions.request(&pending.code).unwrap();
+        sessions.end(&pending.code, &pending.student_secret).unwrap();
+        assert_eq!(sessions.student_status(&pending.code, &pending.student_secret).unwrap(), (Status::Ended, None));
+        assert_eq!(sessions.teacher_status(&pending.code, &waiting_teacher.teacher_secret), Err(Error::Unauthorized));
+        assert_eq!(sessions.decide(&pending.code, &pending.student_secret, &waiting_teacher.request_id, true), Err(Error::InvalidRequest));
+    }
+
+    #[test]
+    fn teacher_disconnect_revokes_approved_and_pending_tokens() {
+        let sessions = SessionStore::new();
+        let student = sessions.create(Duration::from_secs(900)).unwrap();
+        let teacher = sessions.request(&student.code).unwrap();
+        assert_eq!(sessions.disconnect_teacher(&student.code, "invalid"), Err(Error::Unauthorized));
+        sessions.disconnect_teacher(&student.code, &teacher.teacher_secret).unwrap();
+        assert_eq!(sessions.student_status(&student.code, &student.student_secret).unwrap(), (Status::Waiting, None));
+        assert_eq!(sessions.teacher_status(&student.code, &teacher.teacher_secret), Err(Error::Unauthorized));
+        assert_eq!(sessions.decide(&student.code, &student.student_secret, &teacher.request_id, true), Err(Error::InvalidRequest));
+        let next = sessions.request(&student.code).unwrap();
+        sessions.decide(&student.code, &student.student_secret, &next.request_id, true).unwrap();
+        assert!(sessions.can_stream(&student.code, &next.teacher_secret));
+        sessions.disconnect_teacher(&student.code, &next.teacher_secret).unwrap();
+        assert!(!sessions.can_stream(&student.code, &next.teacher_secret));
+        assert_eq!(sessions.teacher_status(&student.code, &next.teacher_secret), Err(Error::Unauthorized));
+        assert_eq!(sessions.student_status(&student.code, &student.student_secret).unwrap(), (Status::Ended, None));
+        assert_eq!(sessions.request(&student.code), Err(Error::InvalidState));
+    }
+
+    #[test]
+    fn concurrent_stop_and_stream_authorization_never_reenable_access() {
+        use std::sync::{atomic::{AtomicBool, Ordering}, Barrier};
+        use std::thread;
+        let sessions = SessionStore::new();
+        let student = sessions.create(Duration::from_secs(900)).unwrap();
+        let teacher = sessions.request(&student.code).unwrap();
+        sessions.decide(&student.code, &student.student_secret, &teacher.request_id, true).unwrap();
+        let barrier = Arc::new(Barrier::new(2));
+        let stopped = Arc::new(AtomicBool::new(false));
+        let worker_sessions = sessions.clone();
+        let code = student.code.clone();
+        let token = teacher.teacher_secret.clone();
+        let worker_barrier = Arc::clone(&barrier);
+        let worker_stopped = Arc::clone(&stopped);
+        let worker = thread::spawn(move || {
+            worker_barrier.wait();
+            for _ in 0..10_000 {
+                // Only assert after STOP has completed; authorization before
+                // revocation may legitimately succeed.
+                if worker_stopped.load(Ordering::Acquire) {
+                    assert!(!worker_sessions.can_stream(&code, &token));
+                } else {
+                    let _ = worker_sessions.can_stream(&code, &token);
+                }
+            }
+        });
+        barrier.wait();
+        sessions.end(&student.code, &student.student_secret).unwrap();
+        stopped.store(true, Ordering::Release);
+        worker.join().unwrap();
+        assert!(!sessions.can_stream(&student.code, &teacher.teacher_secret));
+        assert_eq!(sessions.teacher_status(&student.code, &teacher.teacher_secret), Err(Error::Unauthorized));
+    }
+
+    #[test]
+    fn teacher_transport_disconnect_requires_new_student_code_after_approval() {
+        let sessions = SessionStore::new();
+        let student = sessions.create(Duration::from_secs(900)).unwrap();
+        let first = sessions.request(&student.code).unwrap();
+        sessions.decide(&student.code, &student.student_secret, &first.request_id, true).unwrap();
+        assert!(sessions.can_stream(&student.code, &first.teacher_secret));
+        sessions.disconnect_teacher(&student.code, &first.teacher_secret).unwrap();
+        assert!(!sessions.can_stream(&student.code, &first.teacher_secret));
+        assert_eq!(sessions.teacher_status(&student.code, &first.teacher_secret), Err(Error::Unauthorized));
+        assert_eq!(sessions.request(&student.code), Err(Error::InvalidState));
+        assert_eq!(sessions.disconnect_teacher(&student.code, &first.teacher_secret), Err(Error::Unauthorized));
+        let replacement = sessions.create(Duration::from_secs(900)).unwrap();
+        let next = sessions.request(&replacement.code).unwrap();
+        assert!(!sessions.can_stream(&replacement.code, &next.teacher_secret));
+        sessions.decide(&replacement.code, &replacement.student_secret, &next.request_id, true).unwrap();
+        assert!(sessions.can_stream(&replacement.code, &next.teacher_secret));
+    }
+
+    #[test]
+    fn concurrent_student_stop_and_teacher_approval_cannot_resurrect_session() {
+        use std::sync::Barrier;
+        use std::thread;
+        let sessions = SessionStore::new();
+        let student = sessions.create(Duration::from_secs(900)).unwrap();
+        let teacher = sessions.request(&student.code).unwrap();
+        let barrier = Arc::new(Barrier::new(3));
+        let approval_sessions = sessions.clone();
+        let approval_code = student.code.clone();
+        let approval_secret = student.student_secret.clone();
+        let request_id = teacher.request_id.clone();
+        let approval_barrier = Arc::clone(&barrier);
+        let approval = thread::spawn(move || {
+            approval_barrier.wait();
+            approval_sessions.decide(&approval_code, &approval_secret, &request_id, true)
+        });
+        let stop_sessions = sessions.clone();
+        let stop_code = student.code.clone();
+        let stop_secret = student.student_secret.clone();
+        let stop_barrier = Arc::clone(&barrier);
+        let stop = thread::spawn(move || {
+            stop_barrier.wait();
+            stop_sessions.end(&stop_code, &stop_secret)
+        });
+        barrier.wait();
+        let approval_result = approval.join().unwrap();
+        assert!(matches!(approval_result, Ok(()) | Err(Error::InvalidRequest)));
+        assert_eq!(stop.join().unwrap(), Ok(()));
+        assert!(!sessions.can_stream(&student.code, &teacher.teacher_secret));
+        assert_eq!(sessions.teacher_status(&student.code, &teacher.teacher_secret),
+                   Err(Error::Unauthorized));
+        assert_eq!(sessions.student_status(&student.code, &student.student_secret).unwrap(),
+                   (Status::Ended, None));
+        assert_eq!(sessions.request(&student.code), Err(Error::InvalidState));
+    }
+
+    #[test]
+    fn oversized_session_ttl_is_capped_without_panicking() {
+        let sessions = SessionStore::new();
+        // Duration::MAX must not overflow Instant arithmetic or create
+        // an effectively permanent bearer credential.
+        let student = sessions.create(Duration::MAX).unwrap();
+        let teacher = sessions.request(&student.code).unwrap();
+        assert!(!sessions.can_stream(&student.code, &teacher.teacher_secret));
+        sessions.decide(&student.code, &student.student_secret, &teacher.request_id, true).unwrap();
+        assert!(sessions.can_stream(&student.code, &teacher.teacher_secret));
+        sessions.end(&student.code, &student.student_secret).unwrap();
+        assert!(!sessions.can_stream(&student.code, &teacher.teacher_secret));
     }
 
     #[test]
