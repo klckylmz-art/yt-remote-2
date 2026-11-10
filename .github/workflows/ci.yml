@@ -20,6 +20,19 @@ jobs:
           components: rustfmt, clippy
       - name: Show toolchain and target
         run: rustc -vV
+      # Temporary bootstrap: main currently has no committed Cargo.lock.
+      # Capture the resolved dependency graph for review and a subsequent pinned commit.
+      - name: Generate candidate Cargo.lock
+        run: cargo generate-lockfile
+      - name: Verify candidate lockfile resolves
+        run: cargo metadata --locked --no-deps --format-version 1 > /dev/null
+      - name: Upload candidate lockfile (not yet reproducible)
+        uses: actions/upload-artifact@v4
+        with:
+          name: Cargo-lock-CANDIDATE-${{ github.sha }}
+          path: Cargo.lock
+          if-no-files-found: error
+          retention-days: 7
       - name: Check security gate and relay
         run: cargo check -p yt-session-core -p yt-signaling-server --all-targets
       - name: Test consent and command validation
@@ -54,6 +67,10 @@ jobs:
           esac
           actual="$(rustc -vV | sed -n 's/^host: //p')"
           test "$actual" = "$expected" || { echo "Expected $expected, got $actual" >&2; exit 1; }
+      - name: Generate candidate Cargo.lock for this OS
+        run: cargo generate-lockfile
+      - name: Check lockfile and dependency metadata
+        run: cargo metadata --locked --no-deps --format-version 1
       - name: Compile full workspace
         run: cargo check --workspace --all-targets
       - name: Run all unit tests
