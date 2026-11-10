@@ -2,6 +2,7 @@ name: YT Remote 2 - Build and test
 
 on:
   push:
+    branches: [main]
   pull_request:
   workflow_dispatch:
 
@@ -13,6 +14,7 @@ permissions:
 jobs:
   session-and-relay:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -20,13 +22,20 @@ jobs:
           components: rustfmt, clippy
       - name: Show toolchain and target
         run: rustc -vV
+      - name: Check Rust formatting
+        run: cargo fmt --all -- --check
+      - name: Test workflow regression guards
+        run: python3 -m unittest discover -s tests -v
       - name: Check security gate and relay
-        run: cargo check -p yt-session-core -p yt-signaling-server --all-targets
+        run: cargo check --locked -p yt-session-core -p yt-signaling-server --all-targets
       - name: Test consent and command validation
-        run: cargo test -p yt-session-core -p yt-signaling-server
+        run: cargo test --locked -p yt-session-core -p yt-signaling-server
+      - name: Lint session and relay
+        run: cargo clippy --locked -p yt-session-core -p yt-signaling-server --all-targets -- -D warnings
 
   desktop-build:
-    needs: session-and-relay
+    # Run native builds even when Linux session tests fail; otherwise platform
+    # regressions are hidden as skipped jobs.
     strategy:
       fail-fast: false
       matrix:
@@ -42,6 +51,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
       - name: Verify expected native architecture
         shell: bash
         run: |
@@ -55,11 +66,13 @@ jobs:
           actual="$(rustc -vV | sed -n 's/^host: //p')"
           test "$actual" = "$expected" || { echo "Expected $expected, got $actual" >&2; exit 1; }
       - name: Compile full workspace
-        run: cargo check --workspace --all-targets
+        run: cargo check --locked --workspace --all-targets
       - name: Run all unit tests
-        run: cargo test --workspace
+        run: cargo test --locked --workspace
+      - name: Lint full workspace
+        run: cargo clippy --locked --workspace --all-targets -- -D warnings
       - name: Build native desktop prototype
-        run: cargo build --release -p yt-remote-desktop
+        run: cargo build --locked --release -p yt-remote-desktop
       - name: Generate Windows SHA256 manifest
         if: runner.os == 'Windows'
         shell: pwsh

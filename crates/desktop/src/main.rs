@@ -1,4 +1,7 @@
-#![cfg_attr(all(target_os = "windows", not(debug_assertions)), windows_subsystem = "windows")]
+#![cfg_attr(
+    all(target_os = "windows", not(debug_assertions)),
+    windows_subsystem = "windows"
+)]
 //! Development desktop transport, not a production-grade remote desktop release.
 //! Local OS screen-capture and input permissions are required.
 use enigo::{Button, Coordinate, Direction, Enigo, Key as EKey, Keyboard, Mouse, Settings};
@@ -6,9 +9,16 @@ use image::{imageops::FilterType, DynamicImage, ImageFormat};
 use minifb::{Key, KeyRepeat, MouseButton, MouseMode, Window, WindowOptions};
 use serde_json::{json, Value};
 use std::{
-    env, error::Error, io::{self, Cursor}, collections::HashSet,
-    sync::{atomic::{AtomicBool, Ordering}, mpsc, Arc},
-    thread, time::{Duration, Instant},
+    collections::HashSet,
+    env,
+    error::Error,
+    io::{self, Cursor},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        mpsc, Arc,
+    },
+    thread,
+    time::{Duration, Instant},
 };
 use tungstenite::{client::IntoClientRequest, stream::MaybeTlsStream, Error as WsError, Message};
 use xcap::Monitor;
@@ -23,8 +33,15 @@ fn validate_server(base: &str) -> Result<()> {
     // Never transmit session bearer tokens over cleartext HTTP outside loopback.
     if let Some(authority) = base.strip_prefix("http://") {
         let host = authority.split('/').next().unwrap_or("");
-        if matches!(host, "127.0.0.1:8080" | "localhost:8080" | "[::1]:8080"
-            | "127.0.0.1" | "localhost" | "[::1]") {
+        if matches!(
+            host,
+            "127.0.0.1:8080"
+                | "localhost:8080"
+                | "[::1]:8080"
+                | "127.0.0.1"
+                | "localhost"
+                | "[::1]"
+        ) {
             return Ok(());
         }
     }
@@ -34,8 +51,10 @@ fn api(base: &str, route: &str) -> String {
     format!("{}{}", base.trim_end_matches('/'), route)
 }
 fn token_get(url: &str, token: &str) -> Result<Value> {
-    Ok(ureq::get(url).set("Authorization", &format!("Bearer {token}"))
-        .call()?.into_json()?)
+    Ok(ureq::get(url)
+        .set("Authorization", &format!("Bearer {token}"))
+        .call()?
+        .into_json()?)
 }
 fn token_post(url: &str, token: &str, data: Value) -> Result<()> {
     ureq::post(url)
@@ -53,15 +72,20 @@ fn websocket_url(base: &str, code: &str, role: &str) -> Result<String> {
         Err("YT_REMOTE_SERVER must start with https:// or http://".into())
     }
 }
-fn connect_socket(url: &str, token: &str) -> Result<tungstenite::WebSocket<MaybeTlsStream<std::net::TcpStream>>> {
+fn connect_socket(
+    url: &str,
+    token: &str,
+) -> Result<tungstenite::WebSocket<MaybeTlsStream<std::net::TcpStream>>> {
     let mut request = url.into_client_request()?;
-    request.headers_mut().insert(
-        "Authorization", format!("Bearer {token}").parse()?,
-    );
+    request
+        .headers_mut()
+        .insert("Authorization", format!("Bearer {token}").parse()?);
     let (mut socket, _) = tungstenite::connect(request)?;
     match socket.get_mut() {
         MaybeTlsStream::Plain(s) => s.set_read_timeout(Some(Duration::from_millis(8)))?,
-        MaybeTlsStream::NativeTls(s) => s.get_mut().set_read_timeout(Some(Duration::from_millis(8)))?,
+        MaybeTlsStream::NativeTls(s) => s
+            .get_mut()
+            .set_read_timeout(Some(Duration::from_millis(8)))?,
         _ => {}
     }
     Ok(socket)
@@ -71,13 +95,22 @@ fn no_message(err: &WsError) -> bool {
         if ioe.kind() == io::ErrorKind::TimedOut || ioe.kind() == io::ErrorKind::WouldBlock)
 }
 fn press_key(enigo: &mut Enigo, name: &str, pressed: bool) {
-    let direction = if pressed { Direction::Press } else { Direction::Release };
+    let direction = if pressed {
+        Direction::Press
+    } else {
+        Direction::Release
+    };
     let key = match name {
-        "enter" => EKey::Return, "escape" => EKey::Escape,
-        "backspace" => EKey::Backspace, "tab" => EKey::Tab,
-        "space" => EKey::Space, "left" => EKey::LeftArrow,
-        "right" => EKey::RightArrow, "up" => EKey::UpArrow,
-        "down" => EKey::DownArrow, "delete" => EKey::Delete,
+        "enter" => EKey::Return,
+        "escape" => EKey::Escape,
+        "backspace" => EKey::Backspace,
+        "tab" => EKey::Tab,
+        "space" => EKey::Space,
+        "left" => EKey::LeftArrow,
+        "right" => EKey::RightArrow,
+        "up" => EKey::UpArrow,
+        "down" => EKey::DownArrow,
+        "delete" => EKey::Delete,
         "leftctrl" | "rightctrl" => EKey::Control,
         "leftshift" | "rightshift" => EKey::Shift,
         "leftalt" | "rightalt" => EKey::Alt,
@@ -92,20 +125,32 @@ fn apply_input(enigo: &mut Enigo, command: Value, held_keys: &mut HashSet<String
         "move" | "button" => {
             let (x, y) = (command["x"].as_f64(), command["y"].as_f64());
             if let (Some(x), Some(y)) = (x, y) {
-                if !(0.0..=1.0).contains(&x) || !(0.0..=1.0).contains(&y) { return; }
-                if let Ok((w,h)) = enigo.main_display() {
-                    let _ = enigo.move_mouse((x * f64::from(w - 1)) as i32,
-                        (y * f64::from(h - 1)) as i32, Coordinate::Abs);
+                if !(0.0..=1.0).contains(&x) || !(0.0..=1.0).contains(&y) {
+                    return;
+                }
+                if let Ok((w, h)) = enigo.main_display() {
+                    let _ = enigo.move_mouse(
+                        (x * f64::from(w - 1)) as i32,
+                        (y * f64::from(h - 1)) as i32,
+                        Coordinate::Abs,
+                    );
                 }
             }
             if kind == "button" {
                 let b = match command["button"].as_str().unwrap_or("") {
-                    "left" => Button::Left, "right" => Button::Right,
-                    "middle" => Button::Middle, _ => return,
+                    "left" => Button::Left,
+                    "right" => Button::Right,
+                    "middle" => Button::Middle,
+                    _ => return,
                 };
-                let _ = enigo.button(b, if command["pressed"] == true {
-                    Direction::Press
-                } else { Direction::Release });
+                let _ = enigo.button(
+                    b,
+                    if command["pressed"] == true {
+                        Direction::Press
+                    } else {
+                        Direction::Release
+                    },
+                );
             }
         }
         "scroll" => {
@@ -116,23 +161,39 @@ fn apply_input(enigo: &mut Enigo, command: Value, held_keys: &mut HashSet<String
             if let Some(name) = command["name"].as_str() {
                 let pressed = command["pressed"] == true;
                 press_key(enigo, name, pressed);
-                if pressed { held_keys.insert(name.to_owned()); }
-                else { held_keys.remove(name); }
+                if pressed {
+                    held_keys.insert(name.to_owned());
+                } else {
+                    held_keys.remove(name);
+                }
             }
         }
         _ => {}
     }
 }
 fn student(server: &str) -> Result<()> {
-    let session: Value = ureq::post(&api(server, "/v1/sessions")).call()?.into_json()?;
+    let session: Value = ureq::post(&api(server, "/v1/sessions"))
+        .call()?
+        .into_json()?;
     let code = session["code"].as_str().ok_or("missing code")?.to_owned();
-    let token = session["student_token"].as_str().ok_or("missing student token")?.to_owned();
+    let token = session["student_token"]
+        .as_str()
+        .ok_or("missing student token")?
+        .to_owned();
     println!("\nYOUR CONNECTION CODE: {code}");
     println!("Send this code to your teacher. No screen data is shared yet.");
     let request = loop {
-        let status = token_get(&api(server, &format!("/v1/sessions/{code}/student")), &token)?;
+        let status = token_get(
+            &api(server, &format!("/v1/sessions/{code}/student")),
+            &token,
+        )?;
         match status["status"].as_str().unwrap_or("") {
-            "requested" => break status["request_id"].as_str().ok_or("missing request id")?.to_owned(),
+            "requested" => {
+                break status["request_id"]
+                    .as_str()
+                    .ok_or("missing request id")?
+                    .to_owned()
+            }
             "expired" | "ended" => return Err("Connection code expired".into()),
             "waiting" => thread::sleep(Duration::from_millis(500)),
             _ => return Err("Session no longer waiting".into()),
@@ -143,27 +204,46 @@ fn student(server: &str) -> Result<()> {
     let mut approval = String::new();
     io::stdin().read_line(&mut approval)?;
     let allow = approval.trim() == "ALLOW";
-    token_post(&api(server, &format!("/v1/sessions/{code}/{}",
-        if allow {"allow"} else {"deny"})), &token, json!({"request_id":request}))?;
-    if !allow { println!("Access denied. No screen was shared."); return Ok(()); }
+    token_post(
+        &api(
+            server,
+            &format!(
+                "/v1/sessions/{code}/{}",
+                if allow { "allow" } else { "deny" }
+            ),
+        ),
+        &token,
+        json!({"request_id":request}),
+    )?;
+    if !allow {
+        println!("Access denied. No screen was shared.");
+        return Ok(());
+    }
     println!("Sharing approved. Press Enter to STOP SHARING NOW.");
     let running = Arc::new(AtomicBool::new(true));
     let stop = Arc::clone(&running);
     thread::spawn(move || {
-        let mut input = String::new(); let _ = io::stdin().read_line(&mut input);
+        let mut input = String::new();
+        let _ = io::stdin().read_line(&mut input);
         stop.store(false, Ordering::SeqCst);
     });
     stream_student(server, &code, &token, &running)
-
 }
 fn teacher(server: &str, code: &str) -> Result<()> {
     let code = code.trim().to_ascii_uppercase();
     let session: Value = ureq::post(&api(server, &format!("/v1/sessions/{code}/request")))
-        .call()?.into_json()?;
-    let token = session["teacher_token"].as_str().ok_or("missing token")?.to_owned();
+        .call()?
+        .into_json()?;
+    let token = session["teacher_token"]
+        .as_str()
+        .ok_or("missing token")?
+        .to_owned();
     println!("Waiting for student permission...");
     loop {
-        let status = token_get(&api(server, &format!("/v1/sessions/{code}/teacher")), &token)?;
+        let status = token_get(
+            &api(server, &format!("/v1/sessions/{code}/teacher")),
+            &token,
+        )?;
         match status["status"].as_str().unwrap_or("") {
             "approved" => break,
             "requested" => thread::sleep(Duration::from_millis(500)),
@@ -172,56 +252,66 @@ fn teacher(server: &str, code: &str) -> Result<()> {
         }
     }
     teacher_viewer(server, &code, token)
-
 }
 fn stream_student(server: &str, code: &str, token: &str, running: &Arc<AtomicBool>) -> Result<()> {
-    let mut socket = connect_socket(&websocket_url(server, &code, "student")?, &token)?;
-    let monitor = Monitor::all()?.into_iter().next().ok_or("No monitor found")?;
+    let mut socket = connect_socket(&websocket_url(server, code, "student")?, token)?;
+    let monitor = Monitor::all()?
+        .into_iter()
+        .next()
+        .ok_or("No monitor found")?;
     let mut enigo = Enigo::new(&Settings::default())?;
     let mut held_keys = HashSet::new();
     let mut last = Instant::now() - Duration::from_secs(1);
     let sharing_result: Result<()> = (|| {
-    while running.load(Ordering::SeqCst) {
-        if last.elapsed() >= Duration::from_millis(66) {
-            let shot = monitor.capture_image()?;
-            let mut bytes = Cursor::new(Vec::new());
-            DynamicImage::ImageRgba8(shot)
-                .resize(1280, 720, FilterType::Triangle)
-                .write_to(&mut bytes, ImageFormat::Jpeg)?;
-            socket.send(Message::Binary(bytes.into_inner()))?;
-            last = Instant::now();
-        }
-        match socket.read() {
-            Ok(Message::Text(msg)) => {
-                if let Ok(command) = serde_json::from_str::<Value>(&msg) {
-                    apply_input(&mut enigo, command, &mut held_keys);
-                }
+        while running.load(Ordering::SeqCst) {
+            if last.elapsed() >= Duration::from_millis(66) {
+                let shot = monitor.capture_image()?;
+                let mut bytes = Cursor::new(Vec::new());
+                DynamicImage::ImageRgba8(shot)
+                    .resize(1280, 720, FilterType::Triangle)
+                    .write_to(&mut bytes, ImageFormat::Jpeg)?;
+                socket.send(Message::Binary(bytes.into_inner()))?;
+                last = Instant::now();
             }
-            Ok(Message::Close(_)) => break,
-            Err(e) if no_message(&e) => {}
-            Err(e) => return Err(e.into()),
-            _ => {}
+            match socket.read() {
+                Ok(Message::Text(msg)) => {
+                    if let Ok(command) = serde_json::from_str::<Value>(&msg) {
+                        apply_input(&mut enigo, command, &mut held_keys);
+                    }
+                }
+                Ok(Message::Close(_)) => break,
+                Err(e) if no_message(&e) => {}
+                Err(e) => return Err(e.into()),
+                _ => {}
+            }
         }
-    }
-    Ok(())
+        Ok(())
     })();
     running.store(false, Ordering::SeqCst);
     // Release held modifiers/buttons on any exit, including network failure.
-    for key in held_keys.drain() { press_key(&mut enigo, &key, false); }
+    for key in held_keys.drain() {
+        press_key(&mut enigo, &key, false);
+    }
     for button in [Button::Left, Button::Right, Button::Middle] {
         let _ = enigo.button(button, Direction::Release);
     }
     let _ = socket.close(None);
     // Always revoke the approved session, including on capture/transport error.
-    let _ = token_post(&api(server, &format!("/v1/sessions/{code}/end")), &token, json!({}));
+    let _ = token_post(
+        &api(server, &format!("/v1/sessions/{code}/end")),
+        token,
+        json!({}),
+    );
     println!("Screen sharing stopped.");
     sharing_result
 }
 // Local-only viewer overlay. This is never transmitted to the remote peer.
 fn draw_disconnect(pixels: &mut [u32]) {
-    for py in 0..36 { for px in 1240..1280 {
-        pixels[py * 1280 + px] = 0x882f43;
-    }}
+    for py in 0..36 {
+        for px in 1240..1280 {
+            pixels[py * 1280 + px] = 0x882f43;
+        }
+    }
     for i in 12..26 {
         pixels[i * 1280 + (1247 + (i - 12))] = 0xffffff;
         pixels[i * 1280 + (1260 - (i - 12))] = 0xffffff;
@@ -232,28 +322,41 @@ fn teacher_viewer(server: &str, code: &str, token: String) -> Result<()> {
     // Bound queued input during slow/disconnected networks. A remote controller
     // must never accumulate an unbounded backlog of stale mouse/key events.
     let (to_network, from_ui) = mpsc::sync_channel::<String>(128);
-    let address = websocket_url(server, &code, "teacher")?;
+    let address = websocket_url(server, code, "teacher")?;
     let active = Arc::new(AtomicBool::new(true));
     let network_active = Arc::clone(&active);
     thread::spawn(move || {
-        let Ok(mut socket) = connect_socket(&address, &token) else { network_active.store(false, Ordering::SeqCst); return; };
+        let Ok(mut socket) = connect_socket(&address, &token) else {
+            network_active.store(false, Ordering::SeqCst);
+            return;
+        };
         while network_active.load(Ordering::SeqCst) {
             while let Ok(cmd) = from_ui.try_recv() {
-                if socket.send(Message::Text(cmd)).is_err() { network_active.store(false, Ordering::SeqCst); break; }
+                if socket.send(Message::Text(cmd)).is_err() {
+                    network_active.store(false, Ordering::SeqCst);
+                    break;
+                }
             }
             match socket.read() {
                 Ok(Message::Binary(data)) => {
                     if let Ok(img) = image::load_from_memory(&data) {
                         let img = img.resize_exact(1280, 720, FilterType::Triangle).to_rgb8();
-                        let pixels = img.pixels().map(|p| {
-                            ((p[0] as u32) << 16) | ((p[1] as u32) << 8) | p[2] as u32
-                        }).collect();
+                        let pixels = img
+                            .pixels()
+                            .map(|p| ((p[0] as u32) << 16) | ((p[1] as u32) << 8) | p[2] as u32)
+                            .collect();
                         let _ = to_ui.try_send(pixels);
                     }
                 }
-                Ok(Message::Close(_)) => { network_active.store(false, Ordering::SeqCst); break; }
+                Ok(Message::Close(_)) => {
+                    network_active.store(false, Ordering::SeqCst);
+                    break;
+                }
                 Err(e) if no_message(&e) => {}
-                Err(_) => { network_active.store(false, Ordering::SeqCst); break; }
+                Err(_) => {
+                    network_active.store(false, Ordering::SeqCst);
+                    break;
+                }
                 _ => {}
             }
         }
@@ -261,17 +364,22 @@ fn teacher_viewer(server: &str, code: &str, token: String) -> Result<()> {
     });
     // Borderless viewer sized to the teacher's primary monitor.
     // Native fullscreen/minimize support still requires final device testing.
-    let display = Monitor::all()?.into_iter()
+    let display = Monitor::all()?
+        .into_iter()
         .find(|m| m.is_primary().unwrap_or(false))
         .ok_or("No teacher display found")?;
     let viewer_width = display.width()? as usize;
     let viewer_height = display.height()? as usize;
-    let mut window = Window::new("YT Remote — Esc to Disconnect",viewer_width,viewer_height,
+    let mut window = Window::new(
+        "YT Remote — Esc to Disconnect",
+        viewer_width,
+        viewer_height,
         WindowOptions {
             borderless: true,
             scale_mode: minifb::ScaleMode::Stretch,
             ..WindowOptions::default()
-        })?;
+        },
+    )?;
     window.set_position(0, 0);
     window.set_target_fps(60);
     let mut pixels = vec![0_u32; 1280 * 720];
@@ -281,11 +389,15 @@ fn teacher_viewer(server: &str, code: &str, token: String) -> Result<()> {
     let mut old_left = false;
     let mut old_right = false;
     while active.load(Ordering::SeqCst) && window.is_open() && !window.is_key_down(Key::Escape) {
-        while let Ok(frame) = from_network.try_recv() { pixels = frame; }
-        if let Some((x,y)) = window.get_mouse_pos(MouseMode::Clamp) {
+        while let Ok(frame) = from_network.try_recv() {
+            pixels = frame;
+        }
+        if let Some((x, y)) = window.get_mouse_pos(MouseMode::Clamp) {
             // Reserve the top-right 48x48 display pixels for the local exit control.
             if x >= (viewer_width.saturating_sub(48)) as f32 && y < 48.0 {
-                if window.get_mouse_down(MouseButton::Left) { break; }
+                if window.get_mouse_down(MouseButton::Left) {
+                    break;
+                }
                 // Never inject a click into the student's display from this control.
                 // Paint on a separate buffer to avoid permanently overwriting video pixels.
                 display_pixels.copy_from_slice(&pixels);
@@ -293,30 +405,39 @@ fn teacher_viewer(server: &str, code: &str, token: String) -> Result<()> {
                 window.update_with_buffer(&display_pixels, 1280, 720)?;
                 continue;
             }
-            let x = (f64::from(x) / viewer_width as f64).clamp(0.0,1.0);
-            let y = (f64::from(y) / viewer_height as f64).clamp(0.0,1.0);
+            let x = (f64::from(x) / viewer_width as f64).clamp(0.0, 1.0);
+            let y = (f64::from(y) / viewer_height as f64).clamp(0.0, 1.0);
             if previous_mouse != Some((x.to_bits(), y.to_bits())) {
                 let _ = to_network.try_send(json!({"kind":"move","x":x,"y":y}).to_string());
                 previous_mouse = Some((x.to_bits(), y.to_bits()));
             }
-            for (button,name,old) in [(MouseButton::Left,"left",&mut old_left),
-                                      (MouseButton::Right,"right",&mut old_right)] {
+            for (button, name, old) in [
+                (MouseButton::Left, "left", &mut old_left),
+                (MouseButton::Right, "right", &mut old_right),
+            ] {
                 let down = window.get_mouse_down(button);
                 if down != *old {
-                    let _ = to_network.try_send(json!({"kind":"button","x":x,"y":y,
-                        "button":name,"pressed":down}).to_string());
+                    let _ = to_network.try_send(
+                        json!({"kind":"button","x":x,"y":y,
+                        "button":name,"pressed":down})
+                        .to_string(),
+                    );
                     *old = down;
                 }
             }
         }
         for key in window.get_keys_pressed(KeyRepeat::No) {
-            if key == Key::Escape { continue; }
+            if key == Key::Escape {
+                continue;
+            }
             let name = format!("{key:?}").to_ascii_lowercase();
-            let _ = to_network.try_send(json!({"kind":"key","name":name,"pressed":true}).to_string());
+            let _ =
+                to_network.try_send(json!({"kind":"key","name":name,"pressed":true}).to_string());
         }
         for key in window.get_keys_released() {
             let name = format!("{key:?}").to_ascii_lowercase();
-            let _ = to_network.try_send(json!({"kind":"key","name":name,"pressed":false}).to_string());
+            let _ =
+                to_network.try_send(json!({"kind":"key","name":name,"pressed":false}).to_string());
         }
         // The local overlay must never modify the remote frame.
         display_pixels.copy_from_slice(&pixels);
@@ -344,7 +465,10 @@ fn main() {
             return;
         }
     };
-    if let Err(err) = result { eprintln!("YT Remote error: {err}"); std::process::exit(1); }
+    if let Err(err) = result {
+        eprintln!("YT Remote error: {err}");
+        std::process::exit(1);
+    }
 }
 
 #[cfg(test)]
@@ -356,7 +480,10 @@ mod security_tests {
         let (tx, rx) = mpsc::sync_channel::<String>(2);
         assert!(tx.try_send("first".into()).is_ok());
         assert!(tx.try_send("second".into()).is_ok());
-        assert!(matches!(tx.try_send("stale".into()), Err(TrySendError::Full(_))));
+        assert!(matches!(
+            tx.try_send("stale".into()),
+            Err(TrySendError::Full(_))
+        ));
         assert_eq!(rx.try_recv().unwrap(), "first");
         assert!(tx.try_send("fresh".into()).is_ok());
         assert_eq!(rx.try_recv().unwrap(), "second");
