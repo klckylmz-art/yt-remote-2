@@ -20,13 +20,18 @@ jobs:
           components: rustfmt, clippy
       - name: Show toolchain and target
         run: rustc -vV
+      - name: Check Rust formatting
+        run: cargo fmt --all -- --check
       - name: Check security gate and relay
         run: cargo check -p yt-session-core -p yt-signaling-server --all-targets
       - name: Test consent and command validation
         run: cargo test -p yt-session-core -p yt-signaling-server
+      - name: Lint session and relay
+        run: cargo clippy -p yt-session-core -p yt-signaling-server --all-targets -- -D warnings
 
   desktop-build:
-    needs: session-and-relay
+    # Run native builds even when Linux session tests fail; otherwise platform
+    # regressions are hidden as skipped jobs.
     strategy:
       fail-fast: false
       matrix:
