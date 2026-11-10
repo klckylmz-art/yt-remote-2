@@ -1,0 +1,25 @@
+{
+  "upstream": {
+    "repository": "https://github.com/rustdesk/rustdesk",
+    "license": "AGPL-3.0",
+    "revision": null,
+    "review_status": "pending"
+  },
+  "integration": {
+    "mode": "evaluation-only",
+    "vendored_code": false,
+    "approved_components": [],
+    "prohibited_features": [
+      "audio", "camera", "file-transfer", "clipboard-sync", "unattended-access"
+    ]
+  },
+  "release_gates": {
+    "license_review": false,
+    "security_review": false,
+    "windows_x64_verified": false,
+    "macos_intel_verified": false,
+    "macos_arm_verified": false,
+    "cross_network_verified": false,
+    "performance_benchmarked": false
+  }
+}
