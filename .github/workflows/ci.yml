@@ -102,6 +102,10 @@ jobs:
           test -s "dist/YTRemote-${{ matrix.name }}.dmg"
           cd dist
           shasum -a 256 "YTRemote-${{ matrix.name }}.zip" "YTRemote-${{ matrix.name }}.dmg" > "SHA256SUMS-${{ matrix.name }}.txt"
+      - name: Smoke-test ZIP and mounted DMG contents
+        if: runner.os == 'macOS'
+        shell: bash
+        run: bash packaging/macos/verify-distributables.sh "${{ matrix.name }}"
       - name: Upload macOS app and dmg (untested)
         if: runner.os == 'macOS'
         uses: actions/upload-artifact@v4
