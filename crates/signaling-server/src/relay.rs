@@ -1,16 +1,23 @@
 //! Consent-gated bidirectional relay for video frames and input commands.
 //! Transport is intentionally bound to localhost until TLS and deployment are configured.
 //! This is not a full remote desktop implementation.
-use std::{collections::HashMap, sync::{Arc, Mutex, Weak}, time::Duration};
+use crate::{bearer, App};
 use axum::{
-    extract::{ws::{Message, WebSocket, WebSocketUpgrade}, Path, State},
+    extract::{
+        ws::{Message, WebSocket, WebSocketUpgrade},
+        Path, State,
+    },
     http::{HeaderMap, StatusCode},
     response::IntoResponse,
 };
 use serde::Deserialize;
+use std::{
+    collections::HashMap,
+    sync::{Arc, Mutex, Weak},
+    time::Duration,
+};
 use tokio::sync::broadcast;
 use yt_session_core::Status;
-use crate::{bearer, App};
 
 const FRAME_LIMIT: usize = 3 * 1024 * 1024;
 const INPUT_LIMIT: usize = 4096;
@@ -21,7 +28,11 @@ pub(crate) struct RelayHub {
     inner: Arc<Mutex<HashMap<String, Weak<Channels>>>>,
 }
 impl Default for RelayHub {
-    fn default() -> Self { Self { inner: Arc::new(Mutex::new(HashMap::new())) } }
+    fn default() -> Self {
+        Self {
+            inner: Arc::new(Mutex::new(HashMap::new())),
+        }
+    }
 }
 #[derive(Clone)]
 struct Channels {
@@ -46,19 +57,42 @@ impl RelayHub {
 #[derive(Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 enum InputCommand {
-    Move { x: f64, y: f64 },
-    Button { x: f64, y: f64, button: String, pressed: bool },
-    Scroll { delta: i32 },
-    Key { name: String, pressed: bool },
+    Move {
+        x: f64,
+        y: f64,
+    },
+    Button {
+        x: f64,
+        y: f64,
+        button: String,
+        pressed: bool,
+    },
+    Scroll {
+        delta: i32,
+    },
+    Key {
+        name: String,
+        pressed: bool,
+    },
 }
 fn valid_input(raw: &str) -> bool {
-    if raw.len() > INPUT_LIMIT { return false; }
+    if raw.len() > INPUT_LIMIT {
+        return false;
+    }
     match serde_json::from_str::<InputCommand>(raw) {
-        Ok(InputCommand::Move { x, y }) =>
-            x.is_finite() && y.is_finite() && (0.0..=1.0).contains(&x) && (0.0..=1.0).contains(&y),
-        Ok(InputCommand::Button { x, y, button, pressed }) => {
+        Ok(InputCommand::Move { x, y }) => {
+            x.is_finite() && y.is_finite() && (0.0..=1.0).contains(&x) && (0.0..=1.0).contains(&y)
+        }
+        Ok(InputCommand::Button {
+            x,
+            y,
+            button,
+            pressed,
+        }) => {
             let _ = pressed;
-            x.is_finite() && y.is_finite() && (0.0..=1.0).contains(&x)
+            x.is_finite()
+                && y.is_finite()
+                && (0.0..=1.0).contains(&x)
                 && (0.0..=1.0).contains(&y)
                 && matches!(button.as_str(), "left" | "right" | "middle")
         }
@@ -68,12 +102,25 @@ fn valid_input(raw: &str) -> bool {
             // Keep the relay's key allowlist identical to the native input
             // handler. Unknown names must not be forwarded or stored as
             // permanently held keys on the student's computer.
-            matches!(name.as_str(),
-                "enter" | "escape" | "backspace" | "tab" | "space"
-                | "left" | "right" | "up" | "down" | "delete"
-                | "leftctrl" | "rightctrl" | "leftshift" | "rightshift"
-                | "leftalt" | "rightalt")
-                || (name.len() == 1 && name.bytes().all(|b| b.is_ascii_alphanumeric()))
+            matches!(
+                name.as_str(),
+                "enter"
+                    | "escape"
+                    | "backspace"
+                    | "tab"
+                    | "space"
+                    | "left"
+                    | "right"
+                    | "up"
+                    | "down"
+                    | "delete"
+                    | "leftctrl"
+                    | "rightctrl"
+                    | "leftshift"
+                    | "rightshift"
+                    | "leftalt"
+                    | "rightalt"
+            ) || (name.len() == 1 && name.bytes().all(|b| b.is_ascii_alphanumeric()))
         }
         Err(_) => false,
     }
@@ -87,9 +134,15 @@ fn canonical_channel_key(code: &str) -> String {
 }
 fn approved(app: &App, code: &str, token: &str, student: bool) -> bool {
     if student {
-        matches!(app.sessions.student_status(code, token), Ok((Status::Approved, _)))
+        matches!(
+            app.sessions.student_status(code, token),
+            Ok((Status::Approved, _))
+        )
     } else {
-        matches!(app.sessions.teacher_status(code, token), Ok(Status::Approved))
+        matches!(
+            app.sessions.teacher_status(code, token),
+            Ok(Status::Approved)
+        )
     }
 }
 pub(crate) async fn ws_handler(
@@ -99,10 +152,14 @@ pub(crate) async fn ws_handler(
     headers: HeaderMap,
 ) -> Result<impl IntoResponse, StatusCode> {
     let student = match role.as_str() {
-        "student" => true, "teacher" => false, _ => return Err(StatusCode::NOT_FOUND),
+        "student" => true,
+        "teacher" => false,
+        _ => return Err(StatusCode::NOT_FOUND),
     };
     let token = bearer(&headers)?;
-    if !approved(&app, &code, token, student) { return Err(StatusCode::FORBIDDEN); }
+    if !approved(&app, &code, token, student) {
+        return Err(StatusCode::FORBIDDEN);
+    }
     // The bearer is never included in an invitation and is never logged.
     let token = token.to_owned();
     // SessionStore accepts lowercase and hyphen-free codes. All such aliases
@@ -110,7 +167,8 @@ pub(crate) async fn ws_handler(
     // successfully yet never exchange video or input.
     let channel_key = canonical_channel_key(&code);
     let channels = app.relay.channels(&channel_key);
-    Ok(ws.max_message_size(FRAME_LIMIT + 1024)
+    Ok(ws
+        .max_message_size(FRAME_LIMIT + 1024)
         .max_frame_size(FRAME_LIMIT + 1024)
         .on_upgrade(move |socket| relay_socket(socket, app, code, token, student, channels)))
 }
@@ -178,14 +236,26 @@ mod tests {
     #[test]
     fn rejects_file_transfer_and_unsafe_commands() {
         assert!(valid_input(r#"{"kind":"move","x":0.3,"y":0.9}"#));
-        assert!(valid_input(r#"{"kind":"key","name":"enter","pressed":true}"#));
+        assert!(valid_input(
+            r#"{"kind":"key","name":"enter","pressed":true}"#
+        ));
         assert!(!valid_input(r#"{"kind":"file","path":"/tmp/a"}"#));
         assert!(!valid_input(r#"{"kind":"move","x":50,"y":0.2}"#));
-        assert!(!valid_input(r#"{"kind":"key","name":"ctrl+c","pressed":true}"#));
-        assert!(!valid_input(r#"{"kind":"key","name":"unhandled_key","pressed":true}"#));
-        assert!(!valid_input(r#"{"kind":"key","name":"super","pressed":true}"#));
-        assert!(!valid_input(r#"{"kind":"key","name":"a","pressed":"true"}"#));
-        assert!(valid_input(r#"{"kind":"key","name":"leftshift","pressed":false}"#));
+        assert!(!valid_input(
+            r#"{"kind":"key","name":"ctrl+c","pressed":true}"#
+        ));
+        assert!(!valid_input(
+            r#"{"kind":"key","name":"unhandled_key","pressed":true}"#
+        ));
+        assert!(!valid_input(
+            r#"{"kind":"key","name":"super","pressed":true}"#
+        ));
+        assert!(!valid_input(
+            r#"{"kind":"key","name":"a","pressed":"true"}"#
+        ));
+        assert!(valid_input(
+            r#"{"kind":"key","name":"leftshift","pressed":false}"#
+        ));
         assert!(valid_input(r#"{"kind":"key","name":"z","pressed":true}"#));
     }
     #[test]
@@ -195,8 +265,14 @@ mod tests {
         let canonical = "ABCD-EFGH-JKLM-NPQR";
         let lower = "abcd-efgh-jklm-npqr";
         let compact = "ABCDEFGHJKLMNPQR";
-        assert_eq!(canonical_channel_key(canonical), canonical_channel_key(lower));
-        assert_eq!(canonical_channel_key(canonical), canonical_channel_key(compact));
+        assert_eq!(
+            canonical_channel_key(canonical),
+            canonical_channel_key(lower)
+        );
+        assert_eq!(
+            canonical_channel_key(canonical),
+            canonical_channel_key(compact)
+        );
         let first = hub.channels(&canonical_channel_key(canonical));
         let second = hub.channels(&canonical_channel_key(lower));
         let third = hub.channels(&canonical_channel_key(compact));
@@ -212,16 +288,53 @@ mod tests {
         use std::time::Duration;
         use yt_session_core::SessionStore;
         let sessions = SessionStore::new();
-        let app = App { sessions: sessions.clone(), relay: RelayHub::default() };
+        let app = App {
+            sessions: sessions.clone(),
+            relay: RelayHub::default(),
+        };
         let student = sessions.create(Duration::from_secs(120)).unwrap();
         let teacher = sessions.request(&student.code).unwrap();
-        assert!(!approved(&app, &student.code, &teacher.teacher_secret, false));
-        assert!(!approved(&app, &student.code, &student.student_secret, true));
-        sessions.decide(&student.code, &student.student_secret, &teacher.request_id, true).unwrap();
-        assert!(approved(&app, &student.code, &teacher.teacher_secret, false));
+        assert!(!approved(
+            &app,
+            &student.code,
+            &teacher.teacher_secret,
+            false
+        ));
+        assert!(!approved(
+            &app,
+            &student.code,
+            &student.student_secret,
+            true
+        ));
+        sessions
+            .decide(
+                &student.code,
+                &student.student_secret,
+                &teacher.request_id,
+                true,
+            )
+            .unwrap();
+        assert!(approved(
+            &app,
+            &student.code,
+            &teacher.teacher_secret,
+            false
+        ));
         assert!(approved(&app, &student.code, &student.student_secret, true));
-        sessions.end(&student.code, &student.student_secret).unwrap();
-        assert!(!approved(&app, &student.code, &teacher.teacher_secret, false));
-        assert!(!approved(&app, &student.code, &student.student_secret, true));
+        sessions
+            .end(&student.code, &student.student_secret)
+            .unwrap();
+        assert!(!approved(
+            &app,
+            &student.code,
+            &teacher.teacher_secret,
+            false
+        ));
+        assert!(!approved(
+            &app,
+            &student.code,
+            &student.student_secret,
+            true
+        ));
     }
 }
