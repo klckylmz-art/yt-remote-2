@@ -96,7 +96,7 @@ jobs:
           binary=dist/YTRemote.app/Contents/MacOS/YTRemote
           lipo "$binary" -verify_arch "$arch"
           # Also assert that the Mach-O advertises the expected architecture.
-          lipo "$binary" -archs | tr ' ' '\\n' | grep -Fx -- "$arch"
+          lipo "$binary" -archs | grep -Eq "(^|[[:space:]])${arch}([[:space:]]|$)"
           # A bundle alone is insufficient: both distributable archives must exist.
           test -s "dist/YTRemote-${{ matrix.name }}.zip"
           test -s "dist/YTRemote-${{ matrix.name }}.dmg"
