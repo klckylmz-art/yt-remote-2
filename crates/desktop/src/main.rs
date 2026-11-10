@@ -371,6 +371,7 @@ fn main() {
 #[cfg(test)]
 mod security_tests {
     use super::validate_server;
+    use std::time::Duration;
     #[test]
     fn bounded_input_queue_drops_commands_instead_of_blocking_the_viewer() {
         use std::sync::mpsc::{self, TrySendError};
@@ -395,7 +396,7 @@ mod security_tests {
             let n = stream.read(&mut request).unwrap();
             let raw = String::from_utf8_lossy(&request[..n]);
             assert!(raw.starts_with("GET /redirect HTTP/1.1"));
-            stream.write_all(b"HTTP/1.1 302 Found\\r\\nLocation: https://example.invalid/steal\\r\\nContent-Length: 0\\r\\nConnection: close\\r\\n\\r\\n").unwrap();
+            stream.write_all(b"HTTP/1.1 302 Found\r\nLocation: https://example.invalid/steal\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").unwrap();
         });
         let result = super::http_agent().get(&url)
             .set("Authorization", "Bearer test-secret").call();
