@@ -22,7 +22,11 @@ use std::{
 };
 use tungstenite::{client::IntoClientRequest, stream::MaybeTlsStream, Error as WsError, Message};
 use xcap::Monitor;
+mod direct_gui;
+mod direct_ui_model;
 mod gui;
+mod platform;
+mod video;
 type Result<T> = std::result::Result<T, Box<dyn Error>>;
 
 fn validate_server(base: &str) -> Result<()> {
@@ -114,7 +118,28 @@ fn press_key(enigo: &mut Enigo, name: &str, pressed: bool) {
         "leftctrl" | "rightctrl" => EKey::Control,
         "leftshift" | "rightshift" => EKey::Shift,
         "leftalt" | "rightalt" => EKey::Alt,
-        _ if name.len() == 1 => EKey::Unicode(name.chars().next().unwrap()),
+        "command" | "meta" | "leftsuper" | "rightsuper" => EKey::Meta,
+        "control" => EKey::Control,
+        "shift" => EKey::Shift,
+        "alt" => EKey::Alt,
+        "home" => EKey::Home,
+        "end" => EKey::End,
+        "pageup" => EKey::PageUp,
+        "pagedown" => EKey::PageDown,
+        "capslock" => EKey::CapsLock,
+        "f1" => EKey::F1,
+        "f2" => EKey::F2,
+        "f3" => EKey::F3,
+        "f4" => EKey::F4,
+        "f5" => EKey::F5,
+        "f6" => EKey::F6,
+        "f7" => EKey::F7,
+        "f8" => EKey::F8,
+        "f9" => EKey::F9,
+        "f10" => EKey::F10,
+        "f11" => EKey::F11,
+        "f12" => EKey::F12,
+        _ if name.chars().count() == 1 => EKey::Unicode(name.chars().next().unwrap()),
         _ => return,
     };
     let _ = enigo.key(key, direction);
@@ -449,16 +474,23 @@ fn teacher_viewer(server: &str, code: &str, token: String) -> Result<()> {
     Ok(())
 }
 fn main() {
+    let args: Vec<String> = env::args().collect();
+    if args.len() == 1 {
+        if let Err(err) = direct_gui::launch() {
+            eprintln!("YT Remote error: {err}");
+            std::process::exit(1);
+        }
+        return;
+    }
     let server = env::var("YT_REMOTE_SERVER").unwrap_or_else(|_| "http://127.0.0.1:8080".into());
     if let Err(err) = validate_server(&server) {
         eprintln!("YT Remote configuration error: {err}");
         std::process::exit(1);
     }
-    let args: Vec<String> = env::args().collect();
     let result = match args.as_slice() {
         [_, role] if role == "student" => student(&server),
         [_, role, code] if role == "teacher" => teacher(&server, code),
-        [_] => gui::launch(&server),
+        [_, mode] if mode == "--relay" => gui::launch(&server),
         _ => {
             eprintln!("YT Remote: launch without arguments for the graphical interface.");
             eprintln!("Developer mode: student | teacher STUDENT_CODE");

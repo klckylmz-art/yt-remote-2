@@ -1,12 +1,12 @@
 [package]
 name = "yt-remote-desktop"
-version = "0.1.0"
+version = "3.0.0-alpha.1"
 edition = "2021"
-license = "MIT"
+license = "AGPL-3.0-only"
 
 [dependencies]
 xcap = "0.9.8"
-image = "0.25"
+image = { version = "0.25", default-features = false, features = ["jpeg"] }
 enigo = "0.5"
 minifb = "0.28"
 ureq = { version = "2.12", features = ["json"] }
@@ -14,3 +14,8 @@ serde_json = "1"
 tungstenite = { version = "0.24", features = ["native-tls"] }
 font8x8 = "0.3"
 arboard = "3.4"
+yt-direct-core = { package = "direct-core", path = "../direct-core" }
+raw-window-handle = "0.6"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
