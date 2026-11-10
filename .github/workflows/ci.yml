@@ -68,6 +68,11 @@ jobs:
           if (-not (Test-Path $binary)) { throw "Missing Windows binary" }
           $hash = (Get-FileHash $binary -Algorithm SHA256).Hash.ToLowerInvariant()
           "$hash  yt-remote-desktop.exe" | Set-Content -Encoding ascii target/release/SHA256SUMS.txt
+          # Verify the manifest against the exact executable that will be uploaded.
+          $entry = (Get-Content target/release/SHA256SUMS.txt -Raw).Trim()
+          if ($entry -cne "$hash  yt-remote-desktop.exe") { throw "Invalid Windows checksum manifest" }
+          $verified = (Get-FileHash $binary -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($verified -cne $hash) { throw "Windows artifact changed after hashing" }
       - name: Upload Windows prototype (not a release)
         if: runner.os == 'Windows'
         uses: actions/upload-artifact@v4
@@ -102,6 +107,8 @@ jobs:
           test -s "dist/YTRemote-${{ matrix.name }}.dmg"
           cd dist
           shasum -a 256 "YTRemote-${{ matrix.name }}.zip" "YTRemote-${{ matrix.name }}.dmg" > "SHA256SUMS-${{ matrix.name }}.txt"
+          # Fail before upload if either packaged archive differs from its manifest.
+          shasum -a 256 -c "SHA256SUMS-${{ matrix.name }}.txt"
       - name: Upload macOS app and dmg (untested)
         if: runner.os == 'macOS'
         uses: actions/upload-artifact@v4
