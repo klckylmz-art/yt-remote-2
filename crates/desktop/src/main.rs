@@ -254,7 +254,7 @@ fn teacher(server: &str, code: &str) -> Result<()> {
     teacher_viewer(server, &code, token)
 }
 fn stream_student(server: &str, code: &str, token: &str, running: &Arc<AtomicBool>) -> Result<()> {
-    let mut socket = connect_socket(&websocket_url(server, &code, "student")?, &token)?;
+    let mut socket = connect_socket(&websocket_url(server, code, "student")?, token)?;
     let monitor = Monitor::all()?
         .into_iter()
         .next()
@@ -299,7 +299,7 @@ fn stream_student(server: &str, code: &str, token: &str, running: &Arc<AtomicBoo
     // Always revoke the approved session, including on capture/transport error.
     let _ = token_post(
         &api(server, &format!("/v1/sessions/{code}/end")),
-        &token,
+        token,
         json!({}),
     );
     println!("Screen sharing stopped.");
@@ -322,7 +322,7 @@ fn teacher_viewer(server: &str, code: &str, token: String) -> Result<()> {
     // Bound queued input during slow/disconnected networks. A remote controller
     // must never accumulate an unbounded backlog of stale mouse/key events.
     let (to_network, from_ui) = mpsc::sync_channel::<String>(128);
-    let address = websocket_url(server, &code, "teacher")?;
+    let address = websocket_url(server, code, "teacher")?;
     let active = Arc::new(AtomicBool::new(true));
     let network_active = Arc::clone(&active);
     thread::spawn(move || {
