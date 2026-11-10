@@ -1,0 +1,32 @@
+name: YT Remote 3 - RustDesk adoption safety gates
+
+on:
+  push:
+    paths:
+      - 'docs/rustdesk-upstream.json'
+      - 'docs/YT-REMOTE-3-REQUIREMENTS.md'
+      - 'tests/test_rustdesk_policy.py'
+      - 'tests/test_v3_product_contract.py'
+      - '.github/workflows/v3-policy.yml'
+  pull_request:
+    paths:
+      - 'docs/rustdesk-upstream.json'
+      - 'docs/YT-REMOTE-3-REQUIREMENTS.md'
+      - 'tests/test_rustdesk_policy.py'
+      - 'tests/test_v3_product_contract.py'
+      - '.github/workflows/v3-policy.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  upstream-and-consent-policy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run RustDesk adoption and accountless-consent policy regression tests
+        run: python3 -m unittest discover -s tests -p 'test_*policy.py' -v
+      - name: Run YT Remote 3 product contract regression tests
+        run: python3 -m unittest discover -s tests -p 'test_v3_product_contract.py' -v
