@@ -88,3 +88,7 @@ The student-facing relay WebSocket now **closes on a lagged input broadcast rece
 ### 2026-11-10 — approval request-ID comparison hardening
 
 The session-core approval gate now compares the 128-bit random request ID without early-exit prefix equality. A regression test covers exact matching, truncated and modified IDs, denial of unauthorized approval, successful explicit approval, and replay rejection after STOP. Commit `2965e4f` contains the change. This does **not** replace endpoint rate limiting and is **not** evidence of successful CI or physical-device testing. The new test must pass in `cargo test --locked -p yt-session-core`; full CI and native release gates remain open.
+
+## 2026-11-10 — desktop redirect regression test repair
+
+The native desktop's `security_tests` module used `Duration::from_secs` without importing `Duration` into its nested module scope, preventing that test target from compiling. The loopback HTTP test also emitted literal backslash-r/backslash-n characters instead of CRLF response delimiters, so its supposed HTTP 302 was malformed. Commit `f51bcf3` imports `std::time::Duration` in the test module and writes actual CRLF bytes in the synthetic redirect response. This keeps the no-redirect bearer-token regression meaningful. **Verification pending:** `cargo test --locked -p yt-remote-desktop` and all-platform CI; no successful build, OS device, or live internet test is claimed from this source correction.
