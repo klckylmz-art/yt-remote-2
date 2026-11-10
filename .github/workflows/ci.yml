@@ -92,7 +92,14 @@ jobs:
             macOS-Intel) arch=x86_64 ;;
             *) exit 1 ;;
           esac
-          lipo -verify_arch "$arch" dist/YTRemote.app/Contents/MacOS/YTRemote
+          # lipo requires the input file BEFORE -verify_arch (confirmed by CI job 129126836247).
+          binary=dist/YTRemote.app/Contents/MacOS/YTRemote
+          lipo "$binary" -verify_arch "$arch"
+          # Also assert that the Mach-O advertises the expected architecture.
+          lipo "$binary" -archs | tr ' ' '\\n' | grep -Fx -- "$arch"
+          # A bundle alone is insufficient: both distributable archives must exist.
+          test -s "dist/YTRemote-${{ matrix.name }}.zip"
+          test -s "dist/YTRemote-${{ matrix.name }}.dmg"
           cd dist
           shasum -a 256 "YTRemote-${{ matrix.name }}.zip" "YTRemote-${{ matrix.name }}.dmg" > "SHA256SUMS-${{ matrix.name }}.txt"
       - name: Upload macOS app and dmg (untested)
