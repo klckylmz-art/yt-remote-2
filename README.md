@@ -1,3 +1,81 @@
+# YT Remote 3.0 — experimental native direct mode
+
+**Not a verified release. No NoMachine-equivalence or measured FPS claim.**
+
+The teacher controls the **STUDENT computer**. Applications, mouse actions,
+keyboard input and edits run on the student computer. Different cities and
+modems are the intended test scenario; actual separate-network proof is pending.
+
+## Direct mode (new default native interface)
+
+1. Teacher clicks **GENERATE CODE (TEACHER)**, then **COPY CODE** and sends the
+   complete invitation privately to the student. The invitation lasts ten minutes.
+2. Student clicks **PASTE CODE**, then **CONNECT**.
+3. Student explicitly clicks **ALLOW SCREEN & KEYBOARD** or **DENY**. No screen
+   is captured/transmitted and no input is injected before permission.
+4. Teacher sees the STUDENT screen and controls it. Student can use
+   **STOP SHARING NOW**. Teacher has local minimize/disconnect controls; Escape
+   also disconnects. Ended sessions require a fresh invitation and approval.
+
+No accounts, passwords, subscriptions, audio, camera, files or clipboard
+synchronization. Local copying/pasting of the invitation is permitted.
+
+The direct invitation is longer than the old 16-character relay lookup code:
+it contains the endpoint, ephemeral TLS certificate and random session
+capability. TLS uses that certificate as its trust anchor with standard
+certificate/name validation. No accept-all verifier is used. Keep the code private.
+
+The teacher's app attempts a ten-minute UPnP router mapping and removes it
+when the session worker exits; no permanent mapping fallback or automatic
+firewall rule is added. This needs a reachable teacher-side public IPv4 and
+supported router/ISP/firewall behavior. No rented relay or domain is contacted
+by the direct session. IPv6 direct discovery and relay fallback are not yet
+implemented in this adapter. Unsupported networks report a failure; they do
+not silently disable encryption or ask students to configure an IP address.
+
+The development tests use loopback only and do not touch router mappings,
+OS permission grants, the desktop screen or native mouse/keyboard input.
+
+## Build and verification
+
+Install Rust plus native compiler tools (MSVC/Windows SDK on Windows;
+Apple command-line tools on macOS). Then:
+
+```sh
+cargo fmt --all -- --check
+cargo check --locked --workspace --all-targets
+cargo test --locked --workspace
+cargo clippy --locked --workspace --all-targets -- -D warnings
+cargo build --locked --release -p yt-remote-desktop
+cargo run --locked -p yt-remote-desktop
+```
+
+On matching macOS architecture, package a clean committed checkout with
+`bash packaging/macos/package.sh macOS-Intel` or `macOS-Apple-Silicon`.
+See [Mac permissions](docs/MACOS-PERMISSIONS.md): student-side checks request
+Screen Recording, Accessibility, then Input Monitoring, in that order, only
+following explicit student approval. Missing grants fail closed. macOS may
+require app restart; grants remain controlled by the device owner.
+
+The new video adapter uses adaptive target FPS, JPEG quality 90, 1080p bounds,
+unchanged-frame suppression, bounded latest-frame mailboxes and viewer ACKs.
+This is not a hardware codec engine. RustDesk capture/codec integration and
+[NoMachine quality comparison](docs/NOMACHINE-QUALITY-GATES.md) remain required.
+Physical installs, true fullscreen/Retina/minimize behavior, keyboard layouts,
+OS input release and real different-network tests remain unverified.
+
+The desktop derivative includes AGPL RustDesk QoS code. See [COPYING](COPYING),
+[third-party notices](THIRD_PARTY_NOTICES.md) and the exact upstream revision
+in [component provenance](third_party/rustdesk/NOTICE.md). CI distributions
+include the matching source pointer and remain **UNTESTED**. No stable release
+or Issue #1 completion follows merely from successful compilation.
+
+## Historical relay prototype reference
+
+The following documentation describes the older relay prototype. Its native
+launcher is now developer-only via `cargo run -p yt-remote-desktop -- --relay`;
+its localhost/server configuration is not the new direct-mode workflow.
+
 # YT Remote 2.0
 
 **Development status: native screen/control prototype committed. NOT a verified release.**

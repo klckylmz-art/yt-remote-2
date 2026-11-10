@@ -1,4 +1,4 @@
-name: YT Remote 2 - Build and test
+name: YT Remote 3 - Build and test
 
 on:
   push:
@@ -27,11 +27,11 @@ jobs:
       - name: Test workflow regression guards
         run: python3 -m unittest discover -s tests -v
       - name: Check security gate and relay
-        run: cargo check --locked -p yt-session-core -p yt-signaling-server --all-targets
+        run: cargo check --locked -p yt-session-core -p yt-signaling-server -p direct-core --all-targets
       - name: Test consent and command validation
-        run: cargo test --locked -p yt-session-core -p yt-signaling-server
+        run: cargo test --locked -p yt-session-core -p yt-signaling-server -p direct-core
       - name: Lint session and relay
-        run: cargo clippy --locked -p yt-session-core -p yt-signaling-server --all-targets -- -D warnings
+        run: cargo clippy --locked -p yt-session-core -p yt-signaling-server -p direct-core --all-targets -- -D warnings
 
   desktop-build:
     # Run native builds even when Linux session tests fail; otherwise platform
@@ -81,14 +81,20 @@ jobs:
           if (-not (Test-Path $binary)) { throw "Missing Windows binary" }
           $hash = (Get-FileHash $binary -Algorithm SHA256).Hash.ToLowerInvariant()
           "$hash  yt-remote-desktop.exe" | Set-Content -Encoding ascii target/release/SHA256SUMS.txt
+          Copy-Item COPYING,THIRD_PARTY_NOTICES.md target/release/
+          $revision = git rev-parse HEAD
+          "YT Remote 3.0 EXPERIMENTAL. Corresponding source: https://github.com/klckylmz-art/yt-remote-2/archive/$revision.tar.gz . Build: cargo build --locked --release -p yt-remote-desktop . See COPYING and THIRD_PARTY_NOTICES.md." | Set-Content -Encoding utf8 target/release/SOURCE.txt
       - name: Upload Windows prototype (not a release)
         if: runner.os == 'Windows'
         uses: actions/upload-artifact@v4
         with:
-          name: YT-Remote-2-${{ matrix.name }}-UNTESTED
+          name: YT-Remote-3-${{ matrix.name }}-UNTESTED
           path: |
             target/release/yt-remote-desktop.exe
             target/release/SHA256SUMS.txt
+            target/release/COPYING
+            target/release/THIRD_PARTY_NOTICES.md
+            target/release/SOURCE.txt
           if-no-files-found: error
       - name: Package ad-hoc signed macOS app and dmg
         if: runner.os == 'macOS'
@@ -119,7 +125,7 @@ jobs:
         if: runner.os == 'macOS'
         uses: actions/upload-artifact@v4
         with:
-          name: YT-Remote-2-${{ matrix.name }}-UNTESTED
+          name: YT-Remote-3-${{ matrix.name }}-UNTESTED
           path: |
             dist/YTRemote-${{ matrix.name }}.zip
             dist/YTRemote-${{ matrix.name }}.dmg

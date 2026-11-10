@@ -36,37 +36,37 @@ enum Page {
     Error(String),
 }
 #[derive(Copy, Clone)]
-struct Rect {
-    x: usize,
-    y: usize,
-    w: usize,
-    h: usize,
+pub(super) struct Rect {
+    pub x: usize,
+    pub y: usize,
+    pub w: usize,
+    pub h: usize,
 }
 impl Rect {
-    fn contains(self, x: usize, y: usize) -> bool {
+    pub(super) fn contains(self, x: usize, y: usize) -> bool {
         x >= self.x && x < self.x + self.w && y >= self.y && y < self.y + self.h
     }
 }
-struct Canvas {
-    pixels: Vec<u32>,
+pub(super) struct Canvas {
+    pub pixels: Vec<u32>,
 }
 impl Canvas {
-    fn new() -> Self {
+    pub(super) fn new() -> Self {
         Self {
             pixels: vec![BG; W * H],
         }
     }
-    fn clear(&mut self) {
+    pub(super) fn clear(&mut self) {
         self.pixels.fill(BG);
     }
-    fn fill(&mut self, r: Rect, color: u32) {
+    pub(super) fn fill(&mut self, r: Rect, color: u32) {
         for y in r.y..(r.y + r.h).min(H) {
             for x in r.x..(r.x + r.w).min(W) {
                 self.pixels[y * W + x] = color;
             }
         }
     }
-    fn text(&mut self, x: usize, y: usize, text: &str, color: u32, scale: usize) {
+    pub(super) fn text(&mut self, x: usize, y: usize, text: &str, color: u32, scale: usize) {
         let mut cursor = x;
         for ch in text.chars() {
             if let Some(bitmap) = BASIC_FONTS.get(ch) {
@@ -92,7 +92,7 @@ impl Canvas {
             }
         }
     }
-    fn button(&mut self, rect: Rect, text: &str, color: u32) {
+    pub(super) fn button(&mut self, rect: Rect, text: &str, color: u32) {
         self.fill(rect, color);
         let width = text.len() * 8 * 2;
         let x = rect.x + rect.w.saturating_sub(width) / 2;
