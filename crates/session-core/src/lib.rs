@@ -131,6 +131,10 @@ impl SessionStore {
         let mut all = self.inner.lock().expect("mutex poisoned");
         let e = all.get_mut(&code).ok_or(Error::NotFound)?;
         if !secret_matches(&e.student_secret, student_secret) { return Err(Error::Unauthorized); }
+        // Revoke the bearer and any pending request atomically with STOP.
+        // A previously approved teacher must never authenticate again.
+        e.teacher_secret = None;
+        e.request_id = None;
         e.status = Status::Ended;
         Ok(())
     }
@@ -250,4 +254,55 @@ mod tests {
         let st = s.create(Duration::ZERO).unwrap();
         assert_eq!(s.request(&st.code), Err(Error::Expired));
     }
+    #[test]
+    fn stop_revokes_teacher_bearer_and_pending_request() {
+        let sessions = SessionStore::new();
+        let student = sessions.create(Duration::from_secs(900)).unwrap();
+        let teacher = sessions.request(&student.code).unwrap();
+        sessions
+            .decide(
+                &student.code,
+                &student.student_secret,
+                &teacher.request_id,
+                true,
+            )
+            .unwrap();
+        assert!(sessions.can_stream(&student.code, &teacher.teacher_secret));
+        sessions.end(&student.code, &student.student_secret).unwrap();
+        assert!(!sessions.can_stream(&student.code, &teacher.teacher_secret));
+        assert_eq!(
+            sessions.teacher_status(&student.code, &teacher.teacher_secret),
+            Err(Error::Unauthorized)
+        );
+        assert_eq!(
+            sessions.student_status(&student.code, &student.student_secret),
+            Ok((Status::Ended, None))
+        );
+        assert_eq!(
+            sessions.decide(&student.code, &student.student_secret, &teacher.request_id, true),
+            Err(Error::InvalidRequest)
+        );
+        assert_eq!(sessions.request(&student.code), Err(Error::InvalidState));
+    }
+
+    #[test]
+    fn stop_clears_unapproved_request_and_blocks_replay() {
+        let sessions = SessionStore::new();
+        let student = sessions.create(Duration::from_secs(900)).unwrap();
+        let teacher = sessions.request(&student.code).unwrap();
+        sessions.end(&student.code, &student.student_secret).unwrap();
+        assert_eq!(
+            sessions.teacher_status(&student.code, &teacher.teacher_secret),
+            Err(Error::Unauthorized)
+        );
+        assert_eq!(
+            sessions.student_status(&student.code, &student.student_secret),
+            Ok((Status::Ended, None))
+        );
+        assert_eq!(
+            sessions.decide(&student.code, &student.student_secret, &teacher.request_id, true),
+            Err(Error::InvalidRequest)
+        );
+    }
+
 }
