@@ -84,3 +84,7 @@ Verification required: run `cargo test --locked -p yt-remote-desktop` on each su
 ## Input broadcast lag safety — 2026-11-09
 
 The student-facing relay WebSocket now **closes on a lagged input broadcast receiver** instead of silently skipping lost messages. A lost key-up or mouse-button release can otherwise leave a remote input in a pressed state while later commands continue arriving. The new Tokio regression test proves that overflowing a bounded broadcast channel yields `RecvError::Lagged`. This is a fail-closed transport change, not an OS input-release implementation. The native student must still release all held keys/buttons on WebSocket termination, and live tests must verify that behavior across network loss, STOP and lag. CI, physical-device and cross-network outcomes for this commit are not yet verified.
+
+### 2026-11-10 — approval request-ID comparison hardening
+
+The session-core approval gate now compares the 128-bit random request ID without early-exit prefix equality. A regression test covers exact matching, truncated and modified IDs, denial of unauthorized approval, successful explicit approval, and replay rejection after STOP. Commit `2965e4f` contains the change. This does **not** replace endpoint rate limiting and is **not** evidence of successful CI or physical-device testing. The new test must pass in `cargo test --locked -p yt-session-core`; full CI and native release gates remain open.
