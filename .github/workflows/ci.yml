@@ -20,8 +20,12 @@ jobs:
           components: rustfmt, clippy
       - name: Show toolchain and target
         run: rustc -vV
+      - name: Verify Rust formatting
+        run: cargo fmt --all -- --check
       - name: Check security gate and relay
         run: cargo check -p yt-session-core -p yt-signaling-server --all-targets
+      - name: Lint security gate and relay
+        run: cargo clippy -p yt-session-core -p yt-signaling-server --all-targets -- -D warnings
       - name: Test consent and command validation
         run: cargo test -p yt-session-core -p yt-signaling-server
 
